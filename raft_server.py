@@ -5,40 +5,45 @@ Will implement the Raft protocol.
 from xmlrpc.server import SimpleXMLRPCServer
 #from xmlrpc.server import SimpleXMLRPCServerHandler
 
-class LogEntry():
-    entry = ""
-    def SetValue(self, value):
-        self.value = value
+from log import Log
 
 class RaftNode():
     """docstring for RaftNode."""
 
     '''These will need to be persisted'''
+    '''Put them into a State class which can handle the persistence'''
     currentTerm = 0
     votedFor = 0
-    log = []
-
+    serverId = 1
+    nextIndex = 1
+    server = SimpleXMLRPCServer(('localhost', 8000))
+    server.register_introspection_functions()
 
     def __init__(self, arg):
         # super(RaftNode, self).__init__()
         self.arg = arg
-        self.server = SimpleXMLRPCServer(('localhost', 8000))
-        self.server.register_introspection_functions()
+        self.log = Log()
 
-        def RequestVote(term, candidateId, lastLogIndex, lastLogTerm):
-            print("RequestVote")
+    def RequestVote(term, candidateId, lastLogIndex, lastLogTerm):
+        print("RequestVote")
+        return {currentTerm, true}
+
+    server.register_function(RequestVote)
+
+    def AppendEntries(term, leaderId, prevLogIndex, prevLogTerm,
+                        entries, leaderCommit):
+        print("AppendEntries")
+        if self.log.add_entry(serverId, currentTerm, nextIndex, "a log entry"):
             return {currentTerm, true}
-        self.server.register_function(RequestVote)
+        else:
+            return {currentTerm, false}
 
-        def AppendEntries(term, leaderId, prevLogIndex, prevLogTerm,
-                            entries, leaderCommit):
-            print("AppendEntries")
-            return {currentTerm, true}
-        self.server.register_function(AppendEntries)
+    server.register_function(AppendEntries)
 
-        def adder_function(x, y):
-            return x+y
-        self.server.register_function(adder_function, 'add')
+    def adder_function(x, y):
+        return x+y
+
+    server.register_function(adder_function, 'add')
 
     def serve_forever(self):
         self.server.serve_forever()
