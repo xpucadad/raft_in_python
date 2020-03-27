@@ -5,8 +5,6 @@ Will implement the Raft protocol.
 from xmlrpc.server import SimpleXMLRPCServer
 #from xmlrpc.server import SimpleXMLRPCServerHandler
 
-from log import Log
-
 class RaftNode():
     """docstring for RaftNode."""
 
@@ -22,7 +20,6 @@ class RaftNode():
     def __init__(self, arg):
         # super(RaftNode, self).__init__()
         self.arg = arg
-        self.log = Log()
 
     def RequestVote(term, candidateId, lastLogIndex, lastLogTerm):
         print("RequestVote")
@@ -33,10 +30,6 @@ class RaftNode():
     def AppendEntries(term, leaderId, prevLogIndex, prevLogTerm,
                         entries, leaderCommit):
         print("AppendEntries")
-        if self.log.add_entry(serverId, currentTerm, nextIndex, "a log entry"):
-            return {currentTerm, true}
-        else:
-            return {currentTerm, false}
 
     server.register_function(AppendEntries)
 
