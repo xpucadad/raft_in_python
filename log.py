@@ -25,8 +25,10 @@ class Log():
         return result
 
     def get_entry(self, slot):
-        entry = self.db.Log.find_one({"slot": slot})
-        if entry == None:
-            return (False, str(entry))
+        le = self.db.Log.find_one({"slot": slot})
+        if le == None:
+            return (False, None, None)
         else:
-            return (True, str(entry))
+            term = le["term"]
+            entry = le["entry"]
+            return (True, term, entry)
