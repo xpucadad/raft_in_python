@@ -5,8 +5,11 @@ Will implement the Raft protocol.
 from xmlrpc.server import SimpleXMLRPCServer
 #from xmlrpc.server import SimpleXMLRPCServerHandler
 
-class RaftNode():
-    """docstring for RaftNode."""
+from server_state import ServerState
+
+class RaftServer():
+    """docstring for RaftServer."""
+    serverState = State()
 
     '''These will need to be persisted'''
     '''Put them into a State class which can handle the persistence'''
@@ -24,6 +27,7 @@ class RaftNode():
     def __init__(self, arg):
         # super(RaftNode, self).__init__()
         self.arg = arg
+        serverState.set_state(FOLLOWER)
 
     def RequestVote(term, candidateId, lastLogIndex, lastLogTerm):
         print("RequestVote")
@@ -53,7 +57,7 @@ class RaftNode():
             # append entries
         else:
             # don't know yet
-            
+
         currentTerm = term
 
         print("AppendEntries")
