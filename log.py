@@ -8,7 +8,7 @@ class Log():
     def __init__(self, serverId):
         self.serverId = serverId
         self.client = MongoClient('localhost:27017')
-        self.db = self.client.Raft
+        self.db = self.client.raft
 #        self.collection = self.db.Log
 
     def add_entry(self, term, slot, entry):

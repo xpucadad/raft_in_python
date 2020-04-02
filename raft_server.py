@@ -1,48 +1,53 @@
 '''
 Will implement the Raft protocol.
 '''
+import sys
 
 from xmlrpc.server import SimpleXMLRPCServer
 #from xmlrpc.server import SimpleXMLRPCServerHandler
-from server_states import *
+from server_state import *
+from server_state import PersistedState
 
-def main(server_id):
-    raft_server = RaftServer(server_id)
+from log import Log
+
+server_id = 0
+persisted_state = 0
+log = 0
+
+def main(p_server_id):
+    global server_id
+    global persisted_state
+    global log
+    server_id = p_server_id
+    server = SimpleXMLRPCServer(('localhost', 8000 + server_id))
+    server.register_introspection_functions()
+    server.register_function(RequestVote)
+    server.register_function(AppendEntries)
+
+    role = FOLLOWER
+    commit_index = 0
+    last_applied = 0
+    next_index = []
+    match_index = []
+    persisted_state = PersistedState(server_id)
+
+    log = Log(server_id)
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nKeyboard interupt recieved; exitting")
 
 def RequestVote(term, candidate_id, last_log_index, last_log_term):
     print("RequestVote")
-    return {self.current_term, true}
+    p_state = persisted_state.get_state(server_id)
 
-server.register_function(RequestVote)
+    # Do voting here
+
+    return {p_state['current_term'], true}
 
 def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
                     entries, leader_commit):
-    # ignore requests from past terms
-    if term < self.current_term:
-        return (self.current_term, False)
-
-    if prev_log_index != 0:
-        # get log entry at prev_log_index
-        (status, e_term, _) = log.get_entry(prev_log_index)
-        if not status:
-            return(self.current_term, False)
-
-        if e_term != prev_log_term:
-            return(self.current_term, False)
-
-        new_index = prev_log_index
-
-        (status, e_term, _) = log.get_entry(new_index)
-        if status and (term != e_term):
-            # delete entry and all following
-            Pass
-        # append entries
-        else:
-        # don't know yet
-            Pass
-
-    self.current_term = term
-
     print("AppendEntries")
     print('term: ' + str(term))
     print('leader_id: ' + str(leader_id))
@@ -50,39 +55,41 @@ def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
     print('prev_log_term: ' + str(prev_log_term))
     print('entries: ' + str(entries))
     print('leaderCommit: ' + str(leader_commit))
-    return (self.current_term, True)
 
-server.register_function(AppendEntries)
+    p_state = persisted_state.get_state()
+    current_term = p_state['current_term']
+    print('current_term: ' + str(current_term))
+    print('voted_for: ' + str(p_state['voted_for']))
 
-class RaftServer():
-    """docstring for RaftServer."""
-    server_state = FOLLOWER
+    if term < current_term:
+        return (current_term, False)
 
-    '''These will need to be persisted'''
-    '''Put them into a State class which can handle the persistence'''
-    current_term = 0
-    voted_for = 0
-    server_id = 1
-    next_index = 1
+    (status, entry_term, _) = log.get_entry(prev_log_index)
+    if not status:
+        return(current_term, False)
 
-    commit_index = 0
-    last_applied = 0
+    if entry_term != prev_log_term:
+        return(current_term, False)
 
-    server = SimpleXMLRPCServer(('localhost', 8000 + server_id))
-    server.register_introspection_functions()
+    (status, entry_term, _) = log.get_entry(prev_log_index)
+    if status and (term != entry_term):
+        # delete entry and all following
+        Pass
+    # append entries
+    else:
+    # don't know yet
+        Pass
 
-    def __init__(self, server_id):
-        # super(RaftNode, self).__init__()
-        self.server_id = server_id
+    p_state['current_term'] = term
+    persisted_state.set_state(p_state)
 
-    def serve_forever(self):
-        self.server.serve_forever()
+    return (term, True)
 
 if __name__ == '__main__':
-    raft_server = RaftServer("Ken")
-    try:
-        raft_server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nKeyboard interupt recieved; exitting")
+    # Get server id
+    if len(sys.argv) < 2:
+        print('Must supply server id')
+        exit()
 
-    print("__main__: Goodbye World!")
+    server_id = int(sys.argv[1])
+    main(server_id)
