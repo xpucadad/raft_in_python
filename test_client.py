@@ -9,6 +9,8 @@ def main(server_id):
     #                    entries, leaderCommit
     print(s.system.listMethods())
 
+    for i in range(5):
+        print(s.StupidFunction('Fuck you! %d' % i))
     # Playing leader
     currentTerm = 1
     votedFor = 1
