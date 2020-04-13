@@ -21,8 +21,8 @@ def main(server_id):
     matchIndex = [0, 0, 0]
 
 
-    print(s.AppendEntries(currentTerm, server_id, lastApplied,
-        currentTerm-1, ['one', 'two'], commitIndex))
+    # print(s.AppendEntries(currentTerm, server_id, lastApplied,
+    #     currentTerm-1, ['one', 'two'], commitIndex))
 
 if __name__ == '__main__':
     # Get server id

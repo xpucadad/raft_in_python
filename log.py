@@ -1,13 +1,15 @@
 from pymongo import MongoClient
 
-print("log: Hello, world!")
-
 class Log():
 #    database_name="Raft"
 #    collection_name="Log"
     def __init__(self, serverId):
+        print("log: Hello, world!")
         self.serverId = serverId
-        self.client = MongoClient('localhost:27017')
+        try:
+            self.client = MongoClient('localhost:27017')
+        except Exception as e:
+            print('Connect to MongoDb failed: ', e)
         self.db = self.client.raft
 #        self.collection = self.db.Log
 

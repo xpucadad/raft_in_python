@@ -2,39 +2,55 @@
 Will implement the Raft protocol.
 '''
 import sys
+import random
 
 from xmlrpc.server import SimpleXMLRPCServer
 #from xmlrpc.server import SimpleXMLRPCServerHandler
 from server_state import *
 from server_state import PersistedState
 
-from log import Log
+MIN_TIMEOUT = .3
+MAX_TIMEOUT = .6
 
-server_id = 0
-persisted_state = 0
-log = 0
+# server_id = 0
+# persisted_state = 0
+# log = 0
+class RaftNode(SimpleXMLRPCServer):
+    def __init__(self, server_id):
+        self.server_id = server_id
+        self.port = 8000 + server_id
+        super().__init__(('localhost', self.port))
+        self.register_introspection_functions()
+        self.p_state = PersistedState(server_id)
+        current_state = self.p_state.get_state()
+        self.current_term = current_state['current_term']
+        self.voted_for = current_state['voted_for']
 
-def main(p_server_id):
-    global server_id
-    global persisted_state
-    global log
-    server_id = p_server_id
-    server = SimpleXMLRPCServer(('localhost', 8000 + server_id))
-    server.register_introspection_functions()
-    server.register_function(RequestVote)
-    server.register_function(AppendEntries)
+        self.server_role = FOLLOWER
+        self.commit_index = 0
+        self.last_applied = 0
+        self.next_index = []
+        self.match_index = []
 
-    role = FOLLOWER
-    commit_index = 0
-    last_applied = 0
-    next_index = []
-    match_index = []
-    persisted_state = PersistedState(server_id)
+        self.register_introspection_functions()
+        self.register_function(RequestVote)
+        # self.register_function(AppendEntries)
 
-    log = Log(server_id)
+    def handle_timeout(self):
+        print('Got a timeout!')
+
+    def run(self):
+        while True:
+            # The timeout will call handle_timeout when
+            # the handle_request times out.
+            self.timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
+            self.handle_request()
+
+def main(server_id):
+    server = RaftNode(server_id)
 
     try:
-        server.serve_forever()
+        server.run()
     except KeyboardInterrupt:
         print("\nKeyboard interupt recieved; exitting")
 

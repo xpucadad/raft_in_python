@@ -10,7 +10,14 @@ class PersistedState():
 
     def __init__(self, server_id):
         self.server_id = server_id
-        self.mongo_client = MongoClient('localhost:27017')
+        try:
+            self.mongo_client = MongoClient('localhost:27017')
+        except ServerSelectionTimeoutError as e:
+            print('Failed to connect to MongoDb', e)
+
+        if not self.mongo_client:
+            print('Failed to mongo client')
+            
         self.db = self.mongo_client.raft
         self.key = {'server_id': server_id}
 
