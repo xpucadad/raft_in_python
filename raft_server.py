@@ -3,9 +3,9 @@ Will implement the Raft protocol.
 '''
 import sys
 import random
-
-from xmlrpc.server import SimpleXMLRPCServer
-from xmlrpc.client import ServerProxy
+import queue
+import time
+import multiprocessing as mp
 
 #from xmlrpc.server import SimpleXMLRPCServerHandler
 from server_state import *
@@ -17,13 +17,13 @@ MAX_TIMEOUT = .6
 # server_id = 0
 # persisted_state = 0
 # log = 0
-class RaftNode(SimpleXMLRPCServer):
-    def __init__(self, server_count, server_id):
+class RaftNode():
+    def __init__(self, server_count, server_id, queues):
+        print('RaftNode init', server_count, server_id)
         self.server_count = server_count
         self.server_id = server_id
-        self.port = 8000 + server_id
-        super().__init__(('localhost', self.port))
-        self.register_introspection_functions()
+        self.queues = queues
+        self.in_q = queues[server_id]
         self.p_state = PersistedState(server_id)
         current_state = self.p_state.get_state()
         self.current_term = current_state['current_term']
@@ -34,38 +34,41 @@ class RaftNode(SimpleXMLRPCServer):
         self.last_applied = 0
         self.next_index = []
         self.match_index = []
+        self.stopped = False
+        self.current_request = None
 
-        self.register_introspection_functions()
-        self.register_function(StupidFunction)
-        self.register_function(RequestVote)
-        # self.register_function(AppendEntries)
-
-        # Setup proxies for each of the servers
-        self.proxies = [
-            ServerProxy('http://localhost:800' + str(i)) for i in range(5)
-            ]
-
-        print ('proxies', self.proxies)
-
-    def handle_timeout(self):
-        # print('Got a timeout!')
-        pass
 
     def run(self):
-        while True:
-            # The timeout will call handle_timeout when
-            # the handle_request times out.
-            self.timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
-            # print('setting timeout of %f' % self.timeout)
-            self.handle_request()
+        print('server %d started running' % self.server_id)
+        while not self.stopped:
+            request = {}
+            timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
+            try:
+                request = self.in_q.get(True, timeout)
+                print('server %d got request:' % self.server_id, request)
+                if request['operation'] == 'Stop':
+                    self.stopped = True
+                else:
+                    self.handle_request(self.current_request)
+            except queue.Empty:
+                print('server %d queue empty' % self.server_id)
+            # except KeyboardInterrupt:
+            #     print('server %d got keyboard interupt' % self.server_id)
+            #     self.stopped = True
 
-def main(server_count, server_id):
-    server = RaftNode(server_count, server_id)
 
-    try:
-        server.run()
-    except KeyboardInterrupt:
-        print("\nKeyboard interupt recieved; exitting")
+        print('server %d stopped running' % self.server_id)
+
+    def handle_request(self, request):
+        print('server %d got request' % self.server_id, request)
+        # parse
+        # handle
+        # respond
+
+def main(server_count, server_id, queues):
+    print ('main', server_count, server_id)
+    node = RaftNode(server_count, server_id, queues)
+    node.run()
 
 def StupidFunction(message):
     print(message)
@@ -119,11 +122,31 @@ def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
     return (term, True)
 
 if __name__ == '__main__':
+    print('main entry')
     # Get server id
-    if len(sys.argv) < 3:
-        print('Must supply server count and server id')
+    if len(sys.argv) < 2:
+        print('Must supply server count')
         exit()
 
     server_count = int(sys.argv[1])
-    server_id = int(sys.argv[2])
-    main(server_count, server_id)
+
+    queues = []
+    for i in range(server_count):
+        queues.append(mp.Queue())
+
+    processes = []
+    for id in range(server_count):
+        processes.append(mp.Process(target=main, args=(server_count, id, queues)))
+
+    for p in processes:
+        p.start()
+
+    time.sleep(5)
+
+    request = {'operation': 'Stop'}
+    for q in queues:
+        q.put(request)
+
+    while processes:
+        p = processes.pop(0)
+        p.join()
