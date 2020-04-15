@@ -1,20 +1,19 @@
 import sys
 import xmlrpc.client
 
-def main():
+def main(server_id):
 
-    s = xmlrpc.client.ServerProxy('http://localhost:8099')
+    s = xmlrpc.client.ServerProxy('http://localhost:800' + str(server_id))
 
     #term, leaderId, prevLogIndex, prevLogTerm,
     #                    entries, leaderCommit
     print(s.system.listMethods())
 
     for i in range(5):
-        print(s.get_status(str(i)))
-
-    s.shutdown()
-
+        print(s.dump('something else'))
+#        print(s.StupidFunction('Fuck you! %d' % i))
     # Playing leader
+
     currentTerm = 1
     votedFor = 1
 
@@ -30,4 +29,10 @@ def main():
     #     currentTerm-1, ['one', 'two'], commitIndex))
 
 if __name__ == '__main__':
-    main()
+    # Get server id
+    if len(sys.argv) < 2:
+        print('Must supply server id')
+        exit()
+
+    server_id = int(sys.argv[1])
+    main(server_id)

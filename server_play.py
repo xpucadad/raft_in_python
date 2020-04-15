@@ -33,9 +33,15 @@ class MyRPCServer(SimpleXMLRPCServer):
             self.timeout = 5
             self.handle_request()
 
+class RemoteMethods:
+    def dump(self, status):
+        print('this is the dump method:', status)
+        return status
+
 def main(server_id):
     server = MyRPCServer(server_id)
     server.register_introspection_functions()
+    server.register_instance(RemoteMethods())
 #    server.register_function(AppendEntries)
 #    server.register_function(RequestVote)
     try:

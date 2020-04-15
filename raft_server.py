@@ -6,6 +6,7 @@ import random
 import queue
 import time
 import multiprocessing as mp
+from xmlrpc.server import SimpleXMLRPCServer
 
 #from xmlrpc.server import SimpleXMLRPCServerHandler
 from server_state import *
@@ -35,8 +36,8 @@ class RaftNode():
         self.next_index = []
         self.match_index = []
         self.stopped = False
-        self.current_request = None
-
+        #self.current_request = None
+        self.leader = None
 
     def run(self):
         print('server %d started running' % self.server_id)
@@ -51,7 +52,8 @@ class RaftNode():
                 else:
                     self.handle_request(self.current_request)
             except queue.Empty:
-                print('server %d queue empty' % self.server_id)
+                #print('server %d queue empty' % self.server_id)
+                pass
             # except KeyboardInterrupt:
             #     print('server %d got keyboard interupt' % self.server_id)
             #     self.stopped = True
@@ -65,14 +67,65 @@ class RaftNode():
         # handle
         # respond
 
-def main(server_count, server_id, queues):
-    print ('main', server_count, server_id)
+class RaftClient(SimpleXMLRPCServer):
+    def __init__(self, server_count, queues):
+        self.port = 8099
+        super().__init__(('localhost', self.port))
+
+        self.server_count = server_count
+        self.queues = queues
+        self.leader = None
+        self.shuttingdown = False
+
+        self.register_introspection_functions()
+        self.register_instance(ClientMethods(self, self.queues))
+
+    def run(self):
+        while not self.shuttingdown:
+            self.handle_request()
+
+    def shutdown(self):
+        self.shuttingdown = True
+
+
+class ClientMethods():
+    def __init__(self, client, queues):
+        self.client = client
+        self.queues = queues
+
+    def _dispatch(self, method, params):
+        print('dispatch', method, params)
+
+        result = None
+        if method == 'get_status':
+            result = self.get_status(*params)
+        elif method == 'shutdown':
+            result = self.shutdown()
+        else:
+            print('ERROR!!')
+        return result
+
+    def shutdown(self):
+
+        print('stop_nodes')
+        request = {'operation': 'Stop'}
+        for q in self.queues:
+            q.put(request)
+
+        print('stop server proxy')
+        client.shutdown()
+
+        return True
+
+    def get_status(self, status):
+        print('get_status')
+        print('Current status: ', status)
+        return status
+
+def start_server(server_count, server_id, queues):
+    print ('start_server', server_count, server_id)
     node = RaftNode(server_count, server_id, queues)
     node.run()
-
-def StupidFunction(message):
-    print(message)
-    return message
 
 def RequestVote(term, candidate_id, last_log_index, last_log_term):
     print("RequestVote")
@@ -121,6 +174,7 @@ def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
 
     return (term, True)
 
+
 if __name__ == '__main__':
     print('main entry')
     # Get server id
@@ -136,17 +190,17 @@ if __name__ == '__main__':
 
     processes = []
     for id in range(server_count):
-        processes.append(mp.Process(target=main, args=(server_count, id, queues)))
+        processes.append(mp.Process(target=start_server, args=(server_count, id, queues)))
 
     for p in processes:
         p.start()
 
-    time.sleep(5)
+    client = RaftClient(server_count, queues)
+    client.run()
 
-    request = {'operation': 'Stop'}
     for q in queues:
-        q.put(request)
+        q.close()
+        q.join_thread()
 
-    while processes:
-        p = processes.pop(0)
+    for p in processes:
         p.join()
