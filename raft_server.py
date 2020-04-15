@@ -38,6 +38,7 @@ class RaftNode():
         self.stopped = False
         #self.current_request = None
         self.leader = None
+        self.sm = ServerMethods(self.p_state)
 
     def run(self):
         print('server %d started running' % self.server_id)
@@ -47,25 +48,21 @@ class RaftNode():
             try:
                 request = self.in_q.get(True, timeout)
                 print('server %d got request:' % self.server_id, request)
-                if request['operation'] == 'Stop':
+                operation = request['operation']
+                if operation == 'Stop':
                     self.stopped = True
+                elif operation == 'request_vote':
+                    result = sm.request_vote(request)
+                    self.send_response(request, result)
                 else:
-                    self.handle_request(self.current_request)
+                    print('ERROR: operation %s not implemented' % operation)
             except queue.Empty:
                 #print('server %d queue empty' % self.server_id)
+                #handle timeout
                 pass
-            # except KeyboardInterrupt:
-            #     print('server %d got keyboard interupt' % self.server_id)
-            #     self.stopped = True
-
 
         print('server %d stopped running' % self.server_id)
 
-    def handle_request(self, request):
-        print('server %d got request' % self.server_id, request)
-        # parse
-        # handle
-        # respond
 
 class RaftClient(SimpleXMLRPCServer):
     def __init__(self, server_count, queues):
@@ -93,17 +90,20 @@ class ClientMethods():
         self.client = client
         self.queues = queues
 
-    def _dispatch(self, method, params):
-        print('dispatch', method, params)
-
-        result = None
-        if method == 'get_status':
-            result = self.get_status(*params)
-        elif method == 'shutdown':
-            result = self.shutdown()
-        else:
-            print('ERROR!!')
-        return result
+    # def _dispatch(self, method, params):
+    #     print('dispatch', method, params)
+    #
+    #     result = None
+    #     if method == 'get_status':
+    #         result = self.get_status(*params)
+    #     elif method == 'shutdown':
+    #         result = self.shutdown()
+    #     elif method == 'list_methods':
+    #         result = self.list_methods()
+    #     else:
+    #         print('Error!!')
+    #         result = False
+    #     return result
 
     def shutdown(self):
 
@@ -122,18 +122,28 @@ class ClientMethods():
         print('Current status: ', status)
         return status
 
+    def list_methods(self):
+        return ['get_status', 'shutdown', 'get_status']
+
 def start_server(server_count, server_id, queues):
     print ('start_server', server_count, server_id)
     node = RaftNode(server_count, server_id, queues)
     node.run()
 
-def RequestVote(term, candidate_id, last_log_index, last_log_term):
-    print("RequestVote")
-    p_state = persisted_state.get_state(server_id)
+class ServerMethods():
+    def __init__(self, p_state):
+        self.p_state = p_state
 
-    # Do voting here
+    def request_vote(request):
+        # term, candidate_id, last_log_index, last_log_term):
+        print('Vote Requested', request)
+        state = p_state.get_state()
+        return {state['current_term'], True}
+        return True
 
-    return {p_state['current_term'], true}
+    def list_methods(self):
+        return ['request_vote']
+
 
 def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
                     entries, leader_commit):
@@ -195,6 +205,7 @@ if __name__ == '__main__':
     for p in processes:
         p.start()
 
+    # The clien.run() will complete when the client recieves shutdown RPC
     client = RaftClient(server_count, queues)
     client.run()
 
