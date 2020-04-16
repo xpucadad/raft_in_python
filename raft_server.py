@@ -59,10 +59,30 @@ class RaftNode():
             except queue.Empty:
                 #print('server %d queue empty' % self.server_id)
                 #handle timeout
-                pass
+                if self.role == LEADER:
+                    # handle lack of response to last message
+                    pass
+                elif self.role == CANDIDATE:
+                    # Handel lack of response to vote_request
+                    pass
+                elif self.role == FOLLOWER:
+                    # Does this meam there is no leader?
+                    issue_vote_request()
+                else:
+                    print('Unexpected node role %d' % self.role)
+
 
         print('server %d stopped running' % self.server_id)
 
+        def issue_vote_request(self):
+            self.role = CANDIDATE
+            self.current_term += 1
+            p_state.set_state({'current_term': self.current_term})
+            request = {
+                'operation': 'request_vote',
+                'candidate_id': self.server_if,
+                'current_term': self.current_term,
+                }
 
 class RaftClient(SimpleXMLRPCServer):
     def __init__(self, server_count, queues):
