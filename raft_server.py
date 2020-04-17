@@ -30,7 +30,7 @@ class RaftNode():
         self.current_term = current_state['current_term']
         self.voted_for = current_state['voted_for']
 
-        self.server_role = FOLLOWER
+        self.role = FOLLOWER
         self.commit_index = 0
         self.last_applied = 0
         self.next_index = []
@@ -67,22 +67,22 @@ class RaftNode():
                     pass
                 elif self.role == FOLLOWER:
                     # Does this meam there is no leader?
-                    issue_vote_request()
+                    self.issue_vote_request()
                 else:
                     print('Unexpected node role %d' % self.role)
 
 
         print('server %d stopped running' % self.server_id)
 
-        def issue_vote_request(self):
-            self.role = CANDIDATE
-            self.current_term += 1
-            p_state.set_state({'current_term': self.current_term})
-            request = {
-                'operation': 'request_vote',
-                'candidate_id': self.server_if,
-                'current_term': self.current_term,
-                }
+    def issue_vote_request(self):
+        self.role = CANDIDATE
+        self.current_term += 1
+        p_state.set_state({'current_term': self.current_term})
+        request = {
+            'operation': 'request_vote',
+            'candidate_id': self.server_if,
+            'current_term': self.current_term,
+            }
 
 class RaftClient(SimpleXMLRPCServer):
     def __init__(self, server_count, queues):
