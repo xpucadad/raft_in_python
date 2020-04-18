@@ -49,28 +49,16 @@ class RaftNode():
                 request = self.in_q.get(True, timeout)
                 print('server %d got request:' % self.server_id, request)
                 operation = request['operation']
-                if operation == 'Stop':
+                if operation == 'stop':
                     self.stopped = True
-                elif operation == 'request_vote':
-                    result = sm.request_vote(request)
-                    self.send_response(request, result)
                 else:
                     print('ERROR: operation %s not implemented' % operation)
             except queue.Empty:
-                #print('server %d queue empty' % self.server_id)
-                #handle timeout
-                if self.role == LEADER:
-                    # handle lack of response to last message
-                    pass
-                elif self.role == CANDIDATE:
-                    # Handel lack of response to vote_request
-                    pass
-                elif self.role == FOLLOWER:
-                    # Does this meam there is no leader?
-                    self.issue_vote_request()
-                else:
-                    print('Unexpected node role %d' % self.role)
-
+                # print('Server %d timed out' % self.server_id)
+                pass    # Just ignore it for now
+            except KeyboardInterrupt:
+                print('Queue processing got keyboard interrupt')
+                self.stopped = True
 
         print('server %d stopped running' % self.server_id)
 
@@ -110,25 +98,10 @@ class ClientMethods():
         self.client = client
         self.queues = queues
 
-    # def _dispatch(self, method, params):
-    #     print('dispatch', method, params)
-    #
-    #     result = None
-    #     if method == 'get_status':
-    #         result = self.get_status(*params)
-    #     elif method == 'shutdown':
-    #         result = self.shutdown()
-    #     elif method == 'list_methods':
-    #         result = self.list_methods()
-    #     else:
-    #         print('Error!!')
-    #         result = False
-    #     return result
-
     def shutdown(self):
 
         print('stop_nodes')
-        request = {'operation': 'Stop'}
+        request = {'operation': 'stop'}
         for q in self.queues:
             q.put(request)
 
@@ -213,6 +186,9 @@ if __name__ == '__main__':
         exit()
 
     server_count = int(sys.argv[1])
+    if server_count < 1:
+        print('Must have at least 1 server')
+        exit()
 
     queues = []
     for i in range(server_count):
@@ -227,7 +203,11 @@ if __name__ == '__main__':
 
     # The clien.run() will complete when the client recieves shutdown RPC
     client = RaftClient(server_count, queues)
-    client.run()
+
+    try:
+        client.run()
+    except KeyboardInterrupt:
+        print('Keyboard Interupt, exitting')
 
     for q in queues:
         q.close()
