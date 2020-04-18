@@ -74,13 +74,14 @@ class RaftNode():
             # Verify that the message is for us; i
             if self.server_id != request['to']:
                 error = 'server {} received message for {}; ignoring. request {}'.format(
-                    (self.server_id, request['to'], request)) 
+                    self.server_id, request['to'], request)
                 print(error)
                 response['status'] = False
                 response['error'] = error
                 continue
  
             elif operation == 'stop':
+                print('server %d got stop request' % self.server_id)
                 self.stopped = True
                 response['status'] = True
 
@@ -90,6 +91,7 @@ class RaftNode():
                 response['status'] = False
                 response['error'] = error
 
+            print('server %d about to return response ' % self.server_id, response)
             reply_queue.put(response)
 
         print('server %d stopped running' % self.server_id)
@@ -142,9 +144,11 @@ class ClientMethods():
         # iteration will get every server but not this server.
         # self.server_id == SERVER_COUNT == len(queues
         # probably should pass in SERVER_COUNT explicitly in __init__.
-        for id in range(self.server_id):
+        for id in range(0,self.server_id-1):
             request['to'] = id
-            self.queues[i].put(request)
+            print('server %d sending stop operation to server %d' %
+                (self.server_id, id), request)
+            self.queues[id].put(request)
 
         print('stop server proxy')
         self.client.shutdown()
