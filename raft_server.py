@@ -62,13 +62,13 @@ class RaftNode():
             # We have a request
             # Parse out the operation
             operation = request['operation']
-            reply_queue = self.queues[request['from']]
-
+            from_id = request['from']
+    
             # process the operation
             response = {
                 'operation': operation,
                 'from': self.server_id,
-                'to': request['from']
+                'to': from_id
                 }
 
             # Verify that the message is for us; i
@@ -92,7 +92,7 @@ class RaftNode():
                 response['error'] = error
 
             print('server %d about to return response ' % self.server_id, response)
-            reply_queue.put(response)
+            self.queues[from_id].put(response)
 
         print('server %d stopped running' % self.server_id)
 
@@ -107,12 +107,12 @@ class RaftNode():
             }
 
 class RaftClient(SimpleXMLRPCServer):
-    def __init__(self, server_count, server_id, queues):
+    def __init__(self, server_count, client_id, queues):
         self.port = 8099
         super().__init__(('localhost', self.port))
 
         self.server_count = server_count
-        self.server_id = server_id
+        self.client_id = client_id
         self.queues = queues
         self.leader = None
         self.shuttingdown = False
@@ -120,35 +120,53 @@ class RaftClient(SimpleXMLRPCServer):
         self.register_introspection_functions()
         # We pass our self to ClientMethod calls to allow
         # the shutdown RPC to call our shutdown method.
-        self.register_instance(ClientMethods(self, self.server_id, self.queues))
+        self.register_instance(
+            ClientMethods(self, self.server_count, self.client_id, self.queues)
+            )
 
     def run(self):
         while not self.shuttingdown:
             self.handle_request()
 
     def shutdown(self):
+        print('client shutting down')
         self.shuttingdown = True
 
 
 class ClientMethods():
-    def __init__(self, client, server_id, queues):
+    def __init__(self, client, server_count, client_id, queues):
         self.client = client
-        self.server_id = server_id
+        self.server_count = server_count
+        self.client_id = client_id
         self.queues = queues
+        print('client id %e' % self.client_id)
 
     def shutdown(self):
 
         print('stop_nodes')
-        request = {'operation': 'stop', 'from': self.server_id}
+        request = {'operation': 'stop', 'from': self.client_id}
         # Our server_id is the same as SERVER_COUNT so the follwing
         # iteration will get every server but not this server.
         # self.server_id == SERVER_COUNT == len(queues
         # probably should pass in SERVER_COUNT explicitly in __init__.
-        for id in range(0,self.server_id-1):
+        for id in range(self.server_count):
             request['to'] = id
             print('server %d sending stop operation to server %d' %
-                (self.server_id, id), request)
+                (self.client_id, id), request)
             self.queues[id].put(request)
+
+        # Get all the responses
+        pending_responses = self.server_count
+        print('client waiting for %d responses' % pending_responses)
+        while pending_responses:
+            timeout = random.randint(MIN_TIMEOUT, MAX_TIMEOUT)
+            try:
+                response = self.queues[self.client_id].get(True, timeout)
+            except queue.Empty:
+                print('client timed out waiting for stop responses')
+                continue
+            print('client got response', response)
+            pending_responses -= 1
 
         print('stop server proxy')
         self.client.shutdown()
@@ -260,8 +278,8 @@ if __name__ == '__main__':
     # to charge the state machine.
     #
     # The clien.run() will complete when the client recieves shutdown RPC
-    my_id = server_count
-    client = RaftClient(server_count, my_id, queues)
+    client_id = server_count
+    client = RaftClient(server_count, client_id, queues)
 
     # To shotdown the servers, the client process should issue a shutdown 
     # RPC. This will cause the shotdown method of ClientMethods to get 
