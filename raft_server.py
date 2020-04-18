@@ -12,8 +12,8 @@ from xmlrpc.server import SimpleXMLRPCServer
 from server_state import *
 from server_state import PersistedState
 
-MIN_TIMEOUT = .3
-MAX_TIMEOUT = .6
+MIN_TIMEOUT = 1
+MAX_TIMEOUT = 2
 
 # server_id = 0
 # persisted_state = 0
@@ -25,18 +25,20 @@ class RaftNode():
         self.server_id = server_id
         self.queues = queues
         self.in_q = queues[server_id]
+
+        # retrieve persistent state
         self.p_state = PersistedState(server_id)
         current_state = self.p_state.get_state()
         self.current_term = current_state['current_term']
         self.voted_for = current_state['voted_for']
 
+        # initialize non-persistent state
         self.role = FOLLOWER
         self.commit_index = 0
         self.last_applied = 0
         self.next_index = []
         self.match_index = []
         self.stopped = False
-        #self.current_request = None
         self.leader = None
         self.sm = ServerMethods(self.p_state)
 
@@ -48,17 +50,47 @@ class RaftNode():
             try:
                 request = self.in_q.get(True, timeout)
                 print('server %d got request:' % self.server_id, request)
-                operation = request['operation']
-                if operation == 'stop':
-                    self.stopped = True
-                else:
-                    print('ERROR: operation %s not implemented' % operation)
             except queue.Empty:
-                # print('Server %d timed out' % self.server_id)
-                pass    # Just ignore it for now
+                print('timeout in server %d' % self.server_id)
+                # Do onthing for now
+                continue
             except KeyboardInterrupt:
                 print('Queue processing got keyboard interrupt')
                 self.stopped = True
+                continue
+
+            # We have a request
+            # Parse out the operation
+            operation = request['operation']
+            reply_queue = self.queues[request['from']]
+
+            # process the operation
+            response = {
+                'operation': operation,
+                'from': self.server_id,
+                'to': request['from']
+                }
+
+            # Verify that the message is for us; i
+            if self.server_id != request['to']:
+                error = 'server {} received message for {}; ignoring. request {}'.format(
+                    (self.server_id, request['to'], request)) 
+                print(error)
+                response['status'] = False
+                response['error'] = error
+                continue
+ 
+            elif operation == 'stop':
+                self.stopped = True
+                response['status'] = True
+
+            else:
+                error = 'ERROR: operation %s not implemented' % operation 
+                print(error)
+                response['status'] = False
+                response['error'] = error
+
+            reply_queue.put(response)
 
         print('server %d stopped running' % self.server_id)
 
@@ -73,17 +105,20 @@ class RaftNode():
             }
 
 class RaftClient(SimpleXMLRPCServer):
-    def __init__(self, server_count, queues):
+    def __init__(self, server_count, server_id, queues):
         self.port = 8099
         super().__init__(('localhost', self.port))
 
         self.server_count = server_count
+        self.server_id = server_id
         self.queues = queues
         self.leader = None
         self.shuttingdown = False
 
         self.register_introspection_functions()
-        self.register_instance(ClientMethods(self, self.queues))
+        # We pass our self to ClientMethod calls to allow
+        # the shutdown RPC to call our shutdown method.
+        self.register_instance(ClientMethods(self, self.server_id, self.queues))
 
     def run(self):
         while not self.shuttingdown:
@@ -94,19 +129,25 @@ class RaftClient(SimpleXMLRPCServer):
 
 
 class ClientMethods():
-    def __init__(self, client, queues):
+    def __init__(self, client, server_id, queues):
         self.client = client
+        self.server_id = server_id
         self.queues = queues
 
     def shutdown(self):
 
         print('stop_nodes')
-        request = {'operation': 'stop'}
-        for q in self.queues:
-            q.put(request)
+        request = {'operation': 'stop', 'from': self.server_id}
+        # Our server_id is the same as SERVER_COUNT so the follwing
+        # iteration will get every server but not this server.
+        # self.server_id == SERVER_COUNT == len(queues
+        # probably should pass in SERVER_COUNT explicitly in __init__.
+        for id in range(self.server_id):
+            request['to'] = id
+            self.queues[i].put(request)
 
         print('stop server proxy')
-        client.shutdown()
+        self.client.shutdown()
 
         return True
 
@@ -179,8 +220,9 @@ def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
 
 
 if __name__ == '__main__':
+    ''' This code only runs on the main process and not on subprocesses '''
     print('main entry')
-    # Get server id
+    # Get server id and verify that it's at least 1
     if len(sys.argv) < 2:
         print('Must supply server count')
         exit()
@@ -190,10 +232,17 @@ if __name__ == '__main__':
         print('Must have at least 1 server')
         exit()
 
+    # Create the queues that the usbprocesses use to communicate,
+    # plus one for the RPC client to use
     queues = []
-    for i in range(server_count):
+    for i in range(server_count+1):
         queues.append(mp.Queue())
 
+    # Create the sub processes, Note that the subprocesses won't execute the 
+    # code hene, but will start with a call to start_server.
+    #
+    # Pass all the queues to the start_server function so that all processes
+    # have access to them.
     processes = []
     for id in range(server_count):
         processes.append(mp.Process(target=start_server, args=(server_count, id, queues)))
@@ -201,14 +250,25 @@ if __name__ == '__main__':
     for p in processes:
         p.start()
 
+    # The client implements an XML RPC server which another python script
+    # can use to initiate events. The other process is the client refered
+    # to in the raft documentation - i.e. the process that make requests
+    # to charge the state machine.
+    #
     # The clien.run() will complete when the client recieves shutdown RPC
-    client = RaftClient(server_count, queues)
+    my_id = server_count
+    client = RaftClient(server_count, my_id, queues)
 
+    # To shotdown the servers, the client process should issue a shutdown 
+    # RPC. This will cause the shotdown method of ClientMethods to get 
+    # called which will send a shutdown operation to all subproceess
+    # (using the queues) and then shutting down the XML RPC server itself.
     try:
         client.run()
     except KeyboardInterrupt:
         print('Keyboard Interupt, exitting')
 
+    # Clean up the queues and processes before exitting
     for q in queues:
         q.close()
         q.join_thread()
