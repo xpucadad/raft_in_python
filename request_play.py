@@ -4,7 +4,7 @@ import queue
 import time
 import multiprocessing as mp
 
-SERVER_COUNT = 2
+SERVER_COUNT = 5
 MIN_TIMEOUT = 1
 MAX_TIMEOUT = 2
 
@@ -67,8 +67,8 @@ class Request:
         return response
 
 def start_server(server_id, queues):
-        server = Server(server_id, queues)
-        server.run()
+    server = Server(server_id, queues)
+    server.run()
 
 
 if __name__ == '__main__':
@@ -77,7 +77,6 @@ if __name__ == '__main__':
 
     for i in range(SERVER_COUNT+1):
         queues.append(mp.Queue())
-
 
     processes = []
     for id in range(SERVER_COUNT):
