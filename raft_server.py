@@ -22,16 +22,19 @@ def print_array(array):
 # server_id = 0
 # persisted_state = 0
 # log = 0
+
+'''
+    This class's run method consumes entries from the 
+    self.request_queues[self.server_id] queue
+'''
 class RaftNode():
     def __init__(self, server_count, server_id, 
-                request_queues, response_queues, numbers):
+                request_queues, response_queues):
         print('RaftNode init', server_count, server_id)
-        print_array(numbers)
         self.server_count = server_count
         self.server_id = server_id
         self.request_queues = request_queues
         self.response_queues = response_queues
-        self.numbers = numbers
         # self.in_q = queues[server_id]
         # print('queues received by server %d' % self.server_id)
         # print('\t', self.request_queues)
@@ -51,11 +54,15 @@ class RaftNode():
         self.match_index = []
         self.stopped = False
         self.leader = None
-        self.sm = ServerMethods(self.p_state)
+
+        # These methods implement the calls that are supported by each
+        # raft server. 
+#        self.server_methods = ServerMethods(self.p_state)
 
     def run(self):
         print('server %d started running' % self.server_id)
-        print_array(self.numbers)
+
+        # Main loop for consuming incoming requests
         while not self.stopped:
             request = {}
             timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
@@ -78,7 +85,7 @@ class RaftNode():
             operation = request['operation']
             from_id = request['from']
     
-            # process the operation
+            # prepare response
             response = {
                 'type': 'response',
                 'operation': operation,
@@ -106,28 +113,28 @@ class RaftNode():
                 response['status'] = False
                 response['error'] = error
 
-            print('server %d about to return response ' % self.server_id, response)
+            print('server %d about to return response ' 
+                        % self.server_id, response)
             self.response_queues[from_id].put(response)
 
         print('server %d stopped running' % self.server_id)
 
-    def issue_vote_request(self):
-        self.role = CANDIDATE
-        self.current_term += 1
-        p_state.set_state({'current_term': self.current_term})
-        request = {
-            'type': 'request',
-            'operation': 'request_vote',
-            'candidate_id': self.server_if,
-            'current_term': self.current_term,
-            }
 
+'''
+    This class processes XMLRPC calls sent to 
+    http://localhost:8099.
+
+    The requests are calls to methods in the ClientMethods class.
+    these may be admin requests (such as a stop request), or calls
+    from a client requesting a change to the distributed state 
+    machine that the raft servers are here to process.
+'''
 class RaftClient(SimpleXMLRPCServer):
     def __init__(self, server_count, client_id, 
-                request_queues, response_queues, numbers):
+                request_queues, response_queues):
         print('RaftClient %d' % client_id)
-        print_array(numbers)
-        self.numbers = numbers
+
+        # Call our parent to init the socket
         self.port = 8099
         super().__init__(('localhost', self.port))
 
@@ -143,28 +150,25 @@ class RaftClient(SimpleXMLRPCServer):
         # the shutdown RPC to call our shutdown method.
         self.register_instance(
             ClientMethods(self, self.server_count, self.client_id, 
-                self.request_queues, self.response_queues, self.numbers)
+                self.request_queues, self.response_queues)
             )
 
     def run(self):
         print('RaftClient started running')
-        print_array(self.numbers)
         while not self.shuttingdown:
             self.handle_request()
 
     def shutdown(self):
         print('client shutting down')
-        print(self.numbers)
         self.shuttingdown = True
 
 
 class ClientMethods():
     def __init__(self, client, server_count, client_id, 
-                        request_queues, response_queues, numbers):
+                        request_queues, response_queues):
         print('Client Methods %d' % client_id)
-        print_array(numbers)
-        self.numbers = numbers
-        self.client = client
+        self.client = client    # This is the instance of RaftClient that
+                                # created this instance of ClientMethods
         self.server_count = server_count
         self.client_id = client_id
         self.request_queues = request_queues
@@ -174,7 +178,6 @@ class ClientMethods():
     def shutdown(self):
 
         print('stop_nodes')
-        print_array(self.numbers)
         request = {'type': 'request', 'operation': 'stop', 'from': self.client_id}
         # Our server_id is the same as SERVER_COUNT so the follwing
         # iteration will get every server but not this server.
@@ -184,7 +187,7 @@ class ClientMethods():
             request['to'] = target_id
             target_queue = self.request_queues[target_id]
             print('server %d sending stop operation to server %d' %
-                (self.client_id, target_id), target_queue, request)
+                (self.client_id, target_id), request)
             target_queue.put(request)
 
         # Get all the responses
@@ -195,7 +198,7 @@ class ClientMethods():
             try:
                 response = self.response_queues[self.client_id].get(True, timeout)
             except queue.Empty:
-                print('client timed out waiting for stop responses')
+                print('client timed out waiting for stop response')
                 continue
             print('client got response', response)
             pending_responses -= 1
@@ -205,6 +208,7 @@ class ClientMethods():
 
         return True
 
+    # dummy request for testing
     def get_status(self, status):
         print('get_status')
         print('Current status: ', status)
@@ -213,26 +217,29 @@ class ClientMethods():
     def list_methods(self):
         return ['get_status', 'shutdown', 'get_status']
 
+''' This is the top level entry point for all subprocesses '''
 def start_server(server_count, server_id, 
-                request_queues, response_queues, numbers):
+                request_queues, response_queues):
     print ('start_server', server_count, server_id)
-    print_array (numbers)
-    node = RaftNode(server_count, server_id, request_queues, response_queues, numbers)
+
+    # Create and run the class which will consume entries on the queue
+    # request_queues[server_id].
+    node = RaftNode(server_count, server_id, request_queues, response_queues)
     node.run()
 
-class ServerMethods():
-    def __init__(self, p_state):
-        self.p_state = p_state
+# class ServerMethods():
+    # def __init__(self, p_state):
+    #     self.p_state = p_state
 
-    def request_vote(request):
-        # term, candidate_id, last_log_index, last_log_term):
-        print('Vote Requested', request)
-        state = p_state.get_state()
-        return {state['current_term'], True}
-        return True
+    # def request_vote(request):
+    #     # term, candidate_id, last_log_index, last_log_term):
+    #     print('Vote Requested', request)
+    #     state = p_state.get_state()
+    #     return {state['current_term'], True}
+    #     return True
 
-    def list_methods(self):
-        return ['request_vote']
+    # def list_methods(self):
+    #     return ['request_vote']
 
 
 def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
@@ -274,15 +281,10 @@ def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
 
     return (term, True)
 
-class TestNumber:
-    def __init__(self, number):
-        self.number = number
-
-    def __str__(self):
-        return str(self.number)
-
-
-
+'''
+    The following code is only executed in the process where this
+    script is executed, and not in any of the spawned subprocesses
+'''
 if __name__ == '__main__':
     ''' This code only runs on the main process and not on subprocesses '''
     print('main entry')
@@ -296,29 +298,30 @@ if __name__ == '__main__':
         print('Must have at least 1 server')
         exit()
 
-    # Create the queues that the usbprocesses use to communicate,
-    # plus one for the RPC client to use
+    # Create the queues that the subprocesses use to communicate,
+    # plus one for the RPC client, which only runs in the
+    # original process, to use
     request_queues = [None]*(server_count+1)
     response_queues = [None]*(server_count+1)
     for i in range(server_count+1):
         request_queues[i] = mp.Queue()
         response_queues[i] = mp.Queue()
 
-    numbers = [TestNumber(1), TestNumber(2), TestNumber(3), 
-            TestNumber(4), TestNumber(5)]
-    print_array(numbers)
-
     # Create the sub processes, Note that the subprocesses won't execute the 
     # code hene, but will start with a call to start_server.
     #
     # Pass all the queues to the start_server function so that all processes
     # have access to them.
-    processes = []
-    for id in range(server_count):
-        processes.append(
-            mp.Process(target=start_server, 
-                args=(server_count, id, request_queues, response_queues, numbers)))
+    #
+    # start_server is the function where all subprocesses start execution
+    processes = [None] * server_count
 
+    # Create all the subprocesses
+    for id in range(server_count):
+        processes[id] = mp.Process(target=start_server, 
+                args=(server_count, id, request_queues, response_queues))
+
+    # Start all the subprocesses
     for p in processes:
         p.start()
 
@@ -328,9 +331,13 @@ if __name__ == '__main__':
     # to charge the state machine.
     #
     # The clien.run() will complete when the client recieves shutdown RPC
-    client_id = server_count
+    #
+    # Note that this code is never run in any of the subprocesses, but only
+    # here in the original process.
+    client_id = server_count    # This is equivalent to the server_id and
+                                # identives the queues used by this process
     client = RaftClient(server_count, client_id, 
-                request_queues, response_queues, numbers)
+                request_queues, response_queues)
 
     # To shotdown the servers, the client process should issue a shutdown 
     # RPC. This will cause the shotdown method of ClientMethods to get 
