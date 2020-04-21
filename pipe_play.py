@@ -24,6 +24,7 @@ class RaftServer:
             have_request = self.in_conn.poll(timeout)
             if  not have_request:
                 print('server %d timed out waiting for request' % self.server_id)
+                
                 continue
             else:
                 request = self.in_conn.recv()
@@ -115,14 +116,18 @@ class RaftPipe():
         self.in_conn.close()
         self.out_conn.close()
 
-def broadcast_request(pipes, request):
+def broadcast_request(pipes, request, except_list):
     server_count = len(pipes) - 1
-    for i in range(server_count):
+    responses = [False] * server_count
+    pending_responses = 0 
+    wait_list = []
+    for i in range(server_count) and not in except_list:
         request['to'] = i
         out_conn = pipes[i].out_conn
         out_conn.send(request)
+        pending_responses += 1
 
-    pending_responses = server_count
+    pending_responses = server_count - len(except_list)
     my_id = server_count
     in_conn = pipes[my_id].in_conn
     while pending_responses:
@@ -130,12 +135,16 @@ def broadcast_request(pipes, request):
         have_response = in_conn.poll(timeout)
         if not have_response:
             print('server %d timed out waiting for response' % my_id)
-            continue
+            break
+            
         else:
             response = in_conn.recv()
             print('server %d got respones' % my_id, response)
+            responses[response['from']] = response['status']
+
             pending_responses -= 1
 
+    return responses
 
 
 if __name__ == '__main__':
