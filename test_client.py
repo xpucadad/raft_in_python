@@ -9,9 +9,7 @@ def main():
     #                    entries, leaderCommit
     print(s.system.listMethods())
 
-    for i in range(5):
-        print(s.get_status(str(i)))
-
+    s.update_state('new_state')
     s.shutdown()
 
 if __name__ == '__main__':

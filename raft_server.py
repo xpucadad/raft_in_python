@@ -33,14 +33,10 @@ class RaftNode():
         self.server_count = server_count
         self.server_id = server_id
         self.pipes = pipes
-        # self.in_q = queues[server_id]
-        # print('queues received by server %d' % self.server_id)
-        # print('\t', self.request_queues)
-        # print('\t', self.response_queues)
 
         # retrieve persistent state
-        self.p_state = PersistedState(server_id)
-        current_state = self.p_state.get_state()
+        self.persisted_state = PersistedState(server_id)
+        current_state = self.persisted_state.get_state()
         self.current_term = current_state['current_term']
         self.voted_for = current_state['voted_for']
 
@@ -55,7 +51,8 @@ class RaftNode():
 
         # These methods implement the calls that are supported by each
         # raft server. 
-#        self.server_methods = ServerMethods(self.p_state)
+        self.server_methods = ServerMethods(self, self.persisted_state)
+
 
     def run(self):
         print('server %d started running' % self.server_id)
@@ -96,19 +93,12 @@ class RaftNode():
                 print(error)
                 response['status'] = False
                 response['error'] = error
-                # continue
+                continue
  
-            elif operation == 'stop':
-                print('server %d got stop request' % self.server_id)
-                self.stopped = True
-                response['status'] = True
-
-            else:
-                error = 'ERROR: operation %s not implemented' % operation 
-                print(error)
-                response['status'] = False
-                response['error'] = error
-
+            result = self.server_methods.call_method(operation, request)
+            response['status'] = result['status']
+            response['result'] = result
+ 
             print('server %d about to return response ' 
                         % self.server_id, response)
             out_conn = self.pipes[from_id].out_conn
@@ -116,7 +106,39 @@ class RaftNode():
 
         print('server %d stopped running' % self.server_id)
 
+    def stop(self):
+        self.stopped = True
+        return True
 
+class ServerMethods():
+    def __init__(self, node, persisted_state):
+        self.node = node
+        self.persisted_state = persisted_state
+        self.registered_methods = {}
+        self.register_method('hello', self.hello)
+        self.register_method('stop', self.stop)
+
+    def register_method(self, operation, method):
+        self.registered_methods[operation] = method
+
+    def call_method(self, operation, arg_dict):
+        method = self.registered_methods[operation]
+        if method == None:
+            print('unrecognized server method %s' % operation)
+            status = False
+            result = {'status': False, 'error': 'no such method'}
+        else:
+            result = method(arg_dict)
+        return result
+
+    def hello(self, args):
+        name = args['name']
+        print('hello from %s' % name)
+        return {'status': True, 'name': name}
+
+    def stop(self, args):
+        status = self.node.stop()
+        return {'status': status}
 '''
     This class processes XMLRPC calls sent to 
     http://localhost:8099.
@@ -146,6 +168,7 @@ class RaftClient(SimpleXMLRPCServer):
         # the shutdown RPC to call our shutdown method.
         self.register_instance(
             ClientMethods(self, self.server_count, self.client_id, self.pipes))
+    
 
     def run(self):
         print('RaftClient started running')
@@ -166,6 +189,43 @@ class ClientMethods():
         self.server_count = server_count
         self.client_id = client_id
         self.pipes = pipes
+        self.leader = 0     # assume leader is 0
+
+    def change_state(self, new_state):
+        print('change_state')
+        request = {'type': 'request',
+                    'operation': 'change_state',
+                    'from': self.client_id}
+
+        request_pending = True
+        response = {}
+        while request_pending:
+            request['to'] = self.leader
+            out_conn = self.pipes[self.leader].out_conn
+
+            out_conn.send(request)
+
+            # Wait for the reply
+            in_conn = self.pipes[self.client_id].in_conn
+
+            timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
+            have_response = in_conn.poll(timeout)
+
+            if not have_response:
+                self.leader += 1
+                if self.leader >= self.server_count:
+                    self.leader = 0
+                continue
+
+            response = in_conn.recv()
+            if response['leader'] != self.leader:
+                self.leader = response['leader']
+                continue
+
+            request_pending = False
+            print('response to change_state request:', response)
+            return response
+
 
     def shutdown(self):
 
@@ -187,7 +247,7 @@ class ClientMethods():
         pending_responses = self.server_count
         print('client waiting for %d responses' % pending_responses)
         while pending_responses:
-            timeout = random.randint(MIN_TIMEOUT, MAX_TIMEOUT)
+            timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
 
             have_response = in_conn.poll(timeout)
             if not have_response:
@@ -222,6 +282,8 @@ def start_server(server_count, server_id, pipes):
     # request_queues[server_id].
     node = RaftNode(server_count, server_id, pipes)
     node.run()
+
+
 
 # class ServerMethods():
     # def __init__(self, p_state):
