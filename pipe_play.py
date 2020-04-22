@@ -123,6 +123,7 @@ class DoRequest(Thread):
         self.target_id = target_id
         self.request = request
         self.connection = connection
+        self.result = None
 
     def run(self):
         print('this is running in a thread')
@@ -130,19 +131,19 @@ class DoRequest(Thread):
         self.connection.send(request)
 
         timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
-        self.result = {}
+        self.result = {'status': None, 'from_id': self.target_id}
         have_response = self.connection.poll(timeout)
         if not have_response:
             # we timed out; assume we'll never got a response
             # (at some point we'll need to deal with responeso
             # that come in after timeout - that is ignore them)
-            self.result = False
+            self.result['status'] = False 
         else:
             response = self.connection.recv()
-            self.result = response['status']
+            self.result['status'] = response['status']
 
     def get_result(self):
-        return {'status': self.result, 'target_id': self.target_id}
+        return self.result
 
 def broadcast_request(pipes, request, except_list):
     server_count = len(pipes) - 1
@@ -161,7 +162,7 @@ def broadcast_request(pipes, request, except_list):
     for thread in threads:
         thread.join()
         result = thread.get_result()
-        responses[result['target_id']] = result
+        responses[result['from_id']] = result['status']
 
     return responses
 
@@ -201,9 +202,8 @@ if __name__ == '__main__':
         'operation': 'hello',
         'name': 'Ken'
     }
-    except_list = [my_id]
-
-    
+ 
+    except_list = [1]
     responses = broadcast_request(pipes, request, except_list)
     print('responses form hello', responses)
 
