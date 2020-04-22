@@ -113,23 +113,21 @@ def start_server(server_count, server_id, pipes):
         print('server got keyboard interrput; exitting')
 
 class RaftPipe():
-    def __init__(self, requester_conn, responder_conn):
-        self.requester_conn = requester_conn
-        self.responder_conn = responder_conn
+    def __init__(self):
+        (self.client_side, self.server_side) = mp.Pipe()
 
     def close(self):
-        self.requester_conn.close()
-        self.responder_conn.close()
+        self.client_side.close()
+        self.server_side.close()
 
 class DoRequest(Thread):
-    def __init__(self, target_id, pipe, request):
-        print('DoRequest pipe', pipe)
+    def __init__(self, target_id, connection, request):
         Thread.__init__(self)
         self.target_id = target_id
         self.request = request
-        self.pipe = pipe
+        self.connection = connection
         self.result = None
-
+****HERE****
     def run(self):
         print('this is running in a thread')
         request['to'] = self.target_id
@@ -191,9 +189,7 @@ if __name__ == '__main__':
     pipes = [None] * (server_count+1)
 
     for i in range(server_count+1):
-        (requester_conn, responder_conn) = mp.Pipe()
-        pipe = RaftPipe(requester_conn, responder_conn)
-        pipes[i] = pipe
+        pipes[i] = RaftPipe()
 
     processes = [None] * server_count
     for id in range(server_count):

@@ -2,14 +2,14 @@ from threading import Thread
 import multiprocessing as mp
 
 class TestServer:
-	def __init__(self, pipe):
-		self.pipe = pipe
+	def __init__(self, conn):
+		self.conn = conn
 		self.stopped = False
+
 	def run(self):
 		# conn_a = self.pipe.a
-		conn_b = self.pipe.b
 		while not self.stopped:
-			request = conn_b.recv()
+			request = self.conn.recv()
 			operation = request['operation']
 			print('received request for %s' % operation)
 
@@ -32,34 +32,45 @@ class TestServer:
 			response['status'] = result['status']
 			print('sending operation result')
 
-			conn_b.send(response)
+			self.conn.send(response)
 
 class DoRequest(Thread):
 	def __init__(self, connection, request):
 		Thread.__init__(self)
 		self.connection = connection
 		self.request = request
-		self.result = None
+		self.result = {}
 
 	def run(self):
 		print('DoRequest', self.connection, self.request)
 
-		self.result = self.connection.send(self.request)
+		self.connection.send(self.request)
+		response = self.connection.recv()
+		print('DoRequest response', response)
+		self.result['status'] = response['status']
 
 	def get_result(self):
 		return self.result
 
 class TestPipe():
-    def __init__(self, a, b):
-        self.a = a
-        self.b = b
+	def __init__(self):
+		(self.client_side, self.server_side) = mp.Pipe()
 
-    def close(self):
-        self.a.close()
-        self.b.close()
+	def close(self):
+		self.client_side.close()
+		self.server_side.close()
 
-def start_server(pipe):
-	server = TestServer(pipe)
+# class TestPipe():
+#     def __init__(self, server_side, client_side):
+#         self.server_side = server_side
+#         self.client_side = client_side
+
+#     def close(self):
+#         self.server_side.close()
+#         self.client_side.close()
+
+def start_server(conn):
+	server = TestServer(conn)
 	try:
 		server.run()
 	except KeyboardInterrupt:
@@ -67,15 +78,13 @@ def start_server(pipe):
 
 if __name__ == '__main__':
 
-	(a, b) = mp.Pipe()
-	pipe = TestPipe(a, b)
-	conn = pipe.a
+	pipe = TestPipe()
 
-	server = mp.Process(target = start_server, args=(pipe, ))
+	server = mp.Process(target = start_server, args=(pipe.server_side, ))
 	server.start()
 
 	request = {'operation': 'nothing'}
-	thread = DoRequest(conn, request)
+	thread = DoRequest(pipe.client_side, request)
 	thread.start()
 	thread.join()
 	result = thread.get_result()
@@ -83,7 +92,7 @@ if __name__ == '__main__':
 	print('result:', result)
 
 	request = {'operation': 'stop'}
-	thread = DoRequest(conn, request)
+	thread = DoRequest(pipe.client_side, request)
 	thread.start()
 	thread.join()
 	result = thread.get_result()
