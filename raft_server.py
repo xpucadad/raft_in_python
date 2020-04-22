@@ -97,9 +97,6 @@ class RaftNode():
             else:
                 response['error'] = 'unrecognized node call %s; ingoring' % operation
                 response['status'] = False
-
-
-            result = self.server_methods.call_method(operation, request)
  
             print('server %d about to return response ' 
                         % self.server_id, response)
@@ -203,9 +200,6 @@ class ClientMethods():
 
         return True
 
-    def broadcast(self, request, except_list):
-        for target_id in range(self.server_count) and not in except_list:
-            
     # dummy request for testing
     def get_status(self, status):
         print('get_status')
