@@ -7,6 +7,7 @@ import queue
 import time
 import multiprocessing as mp
 from xmlrpc.server import SimpleXMLRPCServer
+from threading import Thread
 
 #from xmlrpc.server import SimpleXMLRPCServerHandler
 from server_state import *
@@ -14,10 +15,6 @@ from server_state import PersistedState
 
 MIN_TIMEOUT = 1
 MAX_TIMEOUT = 2
-
-def print_array(array):
-    for index in range(len(array)):
-        print(array[index])
 
 # server_id = 0
 # persisted_state = 0
@@ -28,11 +25,11 @@ def print_array(array):
     self.request_queues[self.server_id] queue
 '''
 class RaftNode():
-    def __init__(self, server_count, server_id, pipes):
+    def __init__(self, server_count, server_id, connection):
         print('RaftNode init', server_count, server_id)
         self.server_count = server_count
         self.server_id = server_id
-        self.pipes = pipes
+        self.connection = connection
 
         # retrieve persistent state
         self.persisted_state = PersistedState(server_id)
@@ -58,28 +55,26 @@ class RaftNode():
             request = {}
             timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
 
-            in_conn = self.pipes[self.server_id].in_conn
-
-            have_request = in_conn.poll(timeout)
+            have_request = self.connection.poll(timeout)
 
             if not have_request:
                 print('server %d timed out waiting for a request' % self.server_id )
                 continue
 
-            request = in_conn.recv()
+            request = self.connection.recv()
             print('server %d got request:' % self.server_id, request)
 
             # We have a request
             # Parse out the operation
             operation = request['operation']
-            from_id = request['from']
+            source_id = request['from']
     
             # prepare response
             response = {
                 'type': 'response',
                 'operation': operation,
                 'from': self.server_id,
-                'to': from_id
+                'to': source_id
                 }
 
             # Verify that the message is for us; i
@@ -100,8 +95,7 @@ class RaftNode():
  
             print('server %d about to return response ' 
                         % self.server_id, response)
-            out_conn = self.pipes[from_id].out_conn
-            out_conn.send(response)
+            self.connection.send(response)
 
         print('server %d stopped running' % self.server_id)
 
@@ -149,7 +143,59 @@ class RaftClient(SimpleXMLRPCServer):
     def shutdown(self):
         print('client shutting down')
         self.shuttingdown = True
+        return True
 
+'''
+This thread sends a request to one server and then processes the 
+returned value
+'''
+
+class DoRequest(Thread):
+    def __init__(self, target_id, connection, request):
+        Thread.__init__(self)
+        self.target_id = target_id
+        self.connection = connection
+        self.request = request
+        self.result = None
+
+    def run(self):
+        self.request['to'] = self.target_id
+        self.connection.send(self.request)
+
+        timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
+        self.result = {
+            'status': None,
+            'from': self.target_id
+            }
+
+        if self.connection.poll(timeout):
+            response = self.connection.recv()
+            self.result['status'] = response['status']
+            self.result['response'] = response
+        else:
+            self.result['status'] = False
+
+    def get_result(self):
+        return self.result
+
+def broadcast_request(pipes, request, except_list):
+    server_count = len(pipes) - 1
+    statuses = [False] * server_count
+
+    threads = []
+    for i in range(server_count):
+        if i in except_list:
+            continue
+        thread = DoRequest(i, pipes[i].client_side, request)
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+        result = thread.get_result()
+        statuses[result['from']] = result['status']
+
+    return statuses
 
 class ClientMethods():
     def __init__(self, client, server_count, client_id, pipes):
@@ -170,55 +216,28 @@ class ClientMethods():
         # iteration will get every server but not this server.
         # self.server_id == SERVER_COUNT == len(queues
         # probably should pass in SERVER_COUNT explicitly in __init__.
-        for target_id in range(self.server_count):
-            request['to'] = target_id
-            out_conn = self.pipes[target_id].out_conn
-            print('server %d sending stop operation to server %d' %
-                (self.client_id, target_id), request)
-            out_conn.send(request)
+        statuses = broadcast_request(self.pipes, request, [])
 
-        # Get all the responses
-        in_conn = self.pipes[self.client_id].in_conn
-        pending_responses = self.server_count
-        print('client waiting for %d responses' % pending_responses)
-        while pending_responses:
-            timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
-
-            have_response = in_conn.poll(timeout)
-            if not have_response:
-                print ('client %d timed out waiting for response' % self.client_id)
-                continue
-
-            else:
-                response = in_conn.recv()
-                print('client %d got response:' % self.client_id, response)
-                
-            pending_responses -= 1
-
+        print('ClientMethods results from shutdown request: ', statuses)
         print('stop server proxy')
         self.client.shutdown()
 
         return True
 
-    # dummy request for testing
-    def get_status(self, status):
-        print('get_status')
-        print('Current status: ', status)
-        return status
-
     def list_methods(self):
-        return ['get_status', 'shutdown', 'get_status']
+        return ['shutdown']
 
 ''' This is the top level entry point for all subprocesses '''
-def start_server(server_count, server_id, pipes):
+def start_server(server_count, server_id, connection):
     print ('start_server', server_count, server_id)
 
     # Create and run the class which will consume entries on the queue
     # request_queues[server_id].
-    node = RaftNode(server_count, server_id, pipes)
-    node.run()
-
-
+    node = RaftNode(server_count, server_id, connection)
+    try:
+        node.run()
+    except KeyboardInterrupt:
+        print('server got keyboard interrupt; exitting')
 
 # class ServerMethods():
     # def __init__(self, p_state):
@@ -275,13 +294,12 @@ def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
     return (term, True)
 
 class RaftPipe():
-    def __init__(self, in_conn, out_conn):
-        self.in_conn = in_conn
-        self.out_conn = out_conn
+    def __init__(self):
+        (self.client_side, self.server_side) = mp.Pipe()
 
     def close(self):
-        self.in_conn.close()
-        self.out_conn.close()
+        self.client_side.close()
+        self.server_side.close()
 
 '''
     The following code is only executed in the process where this
@@ -303,8 +321,7 @@ if __name__ == '__main__':
     # Create the pipes
     pipes = [None] * (server_count + 1)
     for i in range(server_count + 1):
-        (in_conn, out_conn) = mp.Pipe()
-        pipes[i] = RaftPipe(in_conn, out_conn)
+        pipes[i] = RaftPipe()
 
     # Create the sub processes, Note that the subprocesses won't execute the 
     # code hene, but will start with a call to start_server.
@@ -317,8 +334,11 @@ if __name__ == '__main__':
 
     # Create all the subprocesses
     for id in range(server_count):
-        processes[id] = mp.Process(target=start_server, 
-                args=(server_count, id, pipes))
+        connection = pipes[id].server_side
+        processes[id] = mp.Process(
+            target=start_server, 
+            args=(server_count, id, connection)
+            )
 
     # Start all the subprocesses
     for p in processes:

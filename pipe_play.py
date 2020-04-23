@@ -145,7 +145,6 @@ class DoRequest(Thread):
 def broadcast_request(pipes, request, except_list):
     server_count = len(pipes) - 1
     responses = [False] * server_count
-    pending_responses = 0 
 
     threads = []
     for i in range(server_count):

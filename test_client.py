@@ -9,7 +9,7 @@ def main():
     #                    entries, leaderCommit
     print(s.system.listMethods())
 
-    s.shutdown()
+    print('client result from shutdown:', s.shutdown())
 
 if __name__ == '__main__':
     main()
