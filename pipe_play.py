@@ -9,12 +9,11 @@ MIN_TIMEOUT = 1
 MAX_TIMEOUT = 2
 
 class RaftServer:
-    def __init__(self, server_count, server_id, pipes):
+    def __init__(self, server_count, server_id, connection):
         print('server for %d created' % server_id)
         self.server_count = server_count
         self.server_id = server_id
-        self.pipes = pipes
-        self.requester_conn = pipes[server_id].requester_conn
+        self.connection = connection
 
         self.stopped = False
         self.server_methods = ServerMethods(self)
@@ -24,13 +23,13 @@ class RaftServer:
         response = {}
         while not self.stopped:
             timeout = random.randint(MIN_TIMEOUT, MAX_TIMEOUT)
-            have_request = self.requester_conn.poll(timeout)
+            have_request = self.connection.poll(timeout)
             if  not have_request:
                 print('server %d timed out waiting for request' % self.server_id)
                 
                 continue
             else:
-                request = self.requester_conn.recv()
+                request = self.connection.recv()
                 print('server %d got request:' % self.server_id, request)
 
             if self.server_id != request['to']:
@@ -58,7 +57,7 @@ class RaftServer:
             response['result'] = result
             response['status'] = result['status']
 
-            self.requester_conn.send(response)
+            self.connection.send(response)
 
         print('server_id %d stopped' % self.server_id)
 
@@ -104,9 +103,9 @@ class ServerMethods:
         result = self.server.stop()
         return {'status': result}
 
-def start_server(server_count, server_id, pipes):
+def start_server(server_count, server_id, connection):
     print('start server for id %d' % server_id)
-    server = RaftServer(server_count, server_id, pipes)
+    server = RaftServer(server_count, server_id, connection)
     try:
         server.run()
     except KeyboardInterrupt:
@@ -127,23 +126,23 @@ class DoRequest(Thread):
         self.request = request
         self.connection = connection
         self.result = None
-****HERE****
+
     def run(self):
         print('this is running in a thread')
         request['to'] = self.target_id
-        self.pipe.requester_conn.send(request)
+        self.connection.send(request)
 
         timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
         self.result = {'status': None, 'from_id': self.target_id}
-        responder_conn = self.pipe.responder_conn
-        have_response = responder_conn.poll(timeout)
+        
+        have_response = self.connection.poll(timeout)
         if not have_response:
             # we timed out; assume we'll never got a response
             # (at some point we'll need to deal with responeso
             # that come in after timeout - that is ignore them)
             self.result['status'] = False 
         else:
-            response = response_conn.recv()
+            response = self.connection.recv()
             print('respose in thread', response)
             self.result['status'] = response['status']
 
@@ -162,7 +161,7 @@ def broadcast_request(pipes, request, except_list):
             continue
         # connection = pipes[i].requester_conn
         print('creating thread for %d to handle'%i,request)
-        thread = DoRequest(i, pipes[i], request)
+        thread = DoRequest(i, pipes[i].client_side, request)
         threads.append(thread)
         thread.start()
 
@@ -193,7 +192,8 @@ if __name__ == '__main__':
 
     processes = [None] * server_count
     for id in range(server_count):
-        processes[id] = mp.Process(target=start_server, args=(server_count, id, pipes))
+        connection = pipes[i].server_side
+        processes[id] = mp.Process(target=start_server, args=(server_count, id, connection))
 
     for p in processes:
         p.start()
