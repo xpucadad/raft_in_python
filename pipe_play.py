@@ -39,10 +39,12 @@ class RaftServer:
             operation = request['operation']
 
             requester_id = request['from']
-            out_conn = self.pipes[requester_id].out_conn
 
-            response = {'from': self.server_id, 'to': requester_id,
-                'operation': operation}
+            response = {
+                'type': 'response',
+                'from': self.server_id, 'to': requester_id,
+                'operation': operation
+                }
             result = {}
 
             # if operation == 'stop':
@@ -51,7 +53,8 @@ class RaftServer:
             #     # result = {'status': True}
             #     result['status'] = True
             # else:
-            print('server %d about to call method for' % server_id, operation)
+            print('server %d about to call method for' % self.server_id, 
+                operation)
             result = self.server_methods.call_method(operation, request)
 
             response['result'] = result
@@ -59,7 +62,7 @@ class RaftServer:
 
             self.connection.send(response)
 
-        print('server_id %d stopped' % self.server_id)
+        print('server %d stopped' % self.server_id)
 
     def stop(self):
         self.stopped = True
@@ -111,13 +114,6 @@ def start_server(server_count, server_id, connection):
     except KeyboardInterrupt:
         print('server got keyboard interrput; exitting')
 
-class RaftPipe():
-    def __init__(self):
-        (self.client_side, self.server_side) = mp.Pipe()
-
-    def close(self):
-        self.client_side.close()
-        self.server_side.close()
 
 class DoRequest(Thread):
     def __init__(self, target_id, connection, request):
@@ -128,29 +124,25 @@ class DoRequest(Thread):
         self.result = None
 
     def run(self):
-        print('this is running in a thread')
         request['to'] = self.target_id
+        print('thread', 'about to send to %d:' % self.target_id, request)
         self.connection.send(request)
 
         timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
         self.result = {'status': None, 'from_id': self.target_id}
         
-        have_response = self.connection.poll(timeout)
-        if not have_response:
-            # we timed out; assume we'll never got a response
-            # (at some point we'll need to deal with responeso
-            # that come in after timeout - that is ignore them)
-            self.result['status'] = False 
-        else:
+        if self.connection.poll(timeout):
             response = self.connection.recv()
-            print('respose in thread', response)
+            print('response from %d in thread' % self.target_id, response)
             self.result['status'] = response['status']
+        else:
+            print('timed out waiting for resposne from %d' % self.target_id)
+            self.result['status'] = False
 
     def get_result(self):
         return self.result
 
 def broadcast_request(pipes, request, except_list):
-    print('broadcast_request pipes', pipes)
     server_count = len(pipes) - 1
     responses = [False] * server_count
     pending_responses = 0 
@@ -168,10 +160,19 @@ def broadcast_request(pipes, request, except_list):
     for thread in threads:
         thread.join()
         result = thread.get_result()
+        print('thread: got result from %d:' % i, result)
         responses[result['from_id']] = result['status']
         print('Current responses', responses)
 
     return responses
+
+class RaftPipe():
+    def __init__(self):
+        (self.client_side, self.server_side) = mp.Pipe()
+
+    def close(self):
+        self.client_side.close()
+        self.server_side.close()
 
 
 if __name__ == '__main__':
@@ -185,34 +186,55 @@ if __name__ == '__main__':
         print('must specify 1 or more servers')
         exit()
 
+    # A slot for each server, plus one for control
     pipes = [None] * (server_count+1)
 
     for i in range(server_count+1):
         pipes[i] = RaftPipe()
 
+    # A server process for each server to handlie incomming messages
     processes = [None] * server_count
     for id in range(server_count):
-        connection = pipes[i].server_side
-        processes[id] = mp.Process(target=start_server, args=(server_count, id, connection))
+        connection = pipes[id].server_side
+        processes[id] = mp.Process(target=start_server, 
+                            args=(server_count, id, connection))
 
     for p in processes:
         p.start()
 
-    time.sleep(1)
-    my_id = server_count
+    # all_alive = False
+    # alive = [False] * server_count
+    # loop = 0
+    # while not all_alive:
+    #     all_alive = True
+    #     for i in range(server_count):
+    #         if not alive[i]:
+    #             alive[i] = processes[i].is_alive()
+    #             if alive[i]:
+    #                 print('server %d is alive' % i)
+    #             else:
+    #                 print('server %d is NOT alive' % i)
+    #                 all_alive = False
+    #     loop += 1
+    # print('alive check ran %d times' % loop, alive)
+
+    control_id = server_count
 
 
     # Issue a request to each server
     request = {
         'type': 'request',
-        'from': my_id,
+        'from': control_id,
         'operation': 'hello',
         'name': 'Ken'
     }
  
     except_list = []
+    # if we have more than 1 server, skip the first.
+    if server_count > 1:
+        except_list.append(0)
     responses = broadcast_request(pipes, request, except_list)
-    print('responses form hello', responses)
+    print('responses from hello', responses)
 
     # request['operation'] = 'goodbye'
     # request['name'] = 'hal'
@@ -220,10 +242,9 @@ if __name__ == '__main__':
     # responses = broadcast_request(pipes, request, except_list)
     # print('responses from goodbye', responses)
 
-
     request['operation'] = 'stop'
 
-    responses = broadcast_request(pipes, request, except_list)
+    responses = broadcast_request(pipes, request, [])
     print('responses from stop', responses)
  
     for i in range(server_count):
