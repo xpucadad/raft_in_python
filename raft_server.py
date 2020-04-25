@@ -21,8 +21,8 @@ MAX_TIMEOUT = 2
 # log = 0
 
 '''
-    This class's run method consumes entries from the 
-    self.request_queues[self.server_id] queue
+    This class's run method consumes entries from the other Raft
+    Nodes via their pipes.
 '''
 class RaftNode():
     def __init__(self, server_count, server_id, pipes):
@@ -32,9 +32,10 @@ class RaftNode():
         self.pipes = pipes
         self.connection = pipes[server_id].server_side
 
-        # retrieve persistent state
+        # PersistedState provides access to any persistent state.
+        # Persisted state is stored in Mongo database.
         self.persisted_state = PersistedState(server_id)
-        current_state = self.persisted_state.get_state()
+        # current_state = self.persisted_state.get_state()
         # self.current_term = current_state['current_term']
         # self.voted_for = current_state['voted_for']
 
@@ -49,6 +50,8 @@ class RaftNode():
         self.stopped = False
         self.leader = None
 
+        # The ServerMethods class contains the remote procedures that
+        # might get called by other Raft nodes.
         self.server_methods = ServerMethods(self, self.persisted_state)
 
  
@@ -61,13 +64,17 @@ class RaftNode():
             timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
 
             have_request = self.connection.poll(timeout)
-
             if not have_request:
+                # If there is no message, assume the leader is dead
+                # and run for leader
                 print('server %d timed out waiting for a request' % self.server_id )
                 if self.role == FOLLOWER:
                     self._run_for_leader()
+                elif self.role = CANDIDATE:
+                    self.role = FOLLOWER
                 continue
 
+            # Process a request
             request = self.connection.recv()
             print('server %d got request:' % self.server_id, request)
 
@@ -84,7 +91,7 @@ class RaftNode():
                 'to': source_id
                 }
 
-            # Verify that the message is for us; i
+            # Verify that the message is for us
             if self.server_id != request['to']:
                 error = 'server {} received message for {}; ignoring. request {}'.format(
                     self.server_id, request['to'], request)
@@ -102,10 +109,14 @@ class RaftNode():
 
         print('server %d stopped running' % self.server_id)
 
+    # Would it make more sense for this to be in ServerMethods? It's
+    # not really callable from anywhere but this class, so for now
+    # I'll leave it here
     def _run_for_leader(self):
         self.role = CANDIDATE
         new_term = self.persisted_state.get_current_term() + 1
         self.persisted_state.set_current_term = new_term
+        self.persisted_state.set_voted_for = self.server_id
  
         request = {
             'from': self.server_id,
@@ -134,29 +145,36 @@ class ServerMethods():
         self.registered_methods.update({'stop': self.stop})
  
     def run_method(self, operation, args):
+        # methods are passed an argument dict containing whatever
+        # data they require (passed from the source Raft node in the
+        # incoming request)
+        # methods must return a status of True or False, plus a dict
+        # contained any data that it needs to return
+        # The run_method method will then package this in a dict with 2
+        # entries, 'status' for the True/False value, and 'output' for 
+        # the data in the returned output dict.
         method = self.registered_methods[operation]
         result = {}
         if not method:
             result['status'] = False
-            result['error'] = 'No method for operation %s' % operation
+            result['output'] = {'error': 'No method for operation %s' % operation}
+
         else:
-            method_return = method(args)
-            result['status'] = method_return['status']
-            result['returned'] = method_return
+            (result['status'], result['output']) = method(args)
 
         return result
 
 
     def stop(self, args):
         status = self.my_server.stop()
-        return {'status': status}
+        return (True, {})
 
     def request_vote(self, args):
-        return {'status': True}
+        return (True, {})
 
 
     def append_entries(self, args):
-        return {'status': True}
+        return (True, {})
 
 
 '''
