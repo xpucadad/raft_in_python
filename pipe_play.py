@@ -26,7 +26,6 @@ class RaftNode:
             have_request = self.connection.poll(timeout)
             if  not have_request:
                 print('server %d timed out waiting for request' % self.node_id)
-                
                 continue
             else:
                 request = self.connection.recv()
@@ -42,10 +41,10 @@ class RaftNode:
 
             response = {
                 'type': 'response',
-                'from': self.node_id, 'to': requester_id,
-                'operation': operation
+                'operation': operation,
+                'from': self.node_id, 
+                'to': requester_id
                 }
-            result = {}
 
             # if operation == 'stop':
             #     print('Server got stop operation')
@@ -53,12 +52,8 @@ class RaftNode:
             #     # result = {'status': True}
             #     result['status'] = True
             # else:
-            print('node %d about to call method for' % self.node_id, 
-                operation)
-            result = self.node_methods.call_method(operation, request)
-
-            response['result'] = result
-            response['status'] = result['status']
+            print('node %d about to call method for' % self.node_id, operation)
+            (response['status'], response['return_args']) = self.node_methods.call_method(operation, request)
 
             self.connection.send(response)
 
@@ -78,16 +73,19 @@ class RaftNodeMethods:
         # self.register_method('hello', self.hello)
         # self.register_method('goodbye', self.goodbye)
 
-    # def register_method(self, operation, method):
     #     self.registered_methods['operation'] = method
 
-    def call_method(self, operation, dict):
+    # Methods should always return a twople. The 1st entry is
+    # either True or False and the second is a dictionary of return
+    # arguments or values. This twople will then be returne to 
+    # the caller of call_method
+    def call_method(self, operation, request):
         method = self.registered_methods[operation]
         if method:
-            result = method(dict)
+            result = method(request)
         else:
             error = 'No such method' + operation
-            result =  {'status': False, 'error': error}
+            result =  (False, {'error': error})
 
         return result
 
@@ -95,16 +93,16 @@ class RaftNodeMethods:
         name = request['name']
         sender = request['to']
         print('hello %s from server %d' % (name, sender))
-        return {'status': True, 'return_args': {'name': name}}
+        return (True, {'name': name})
 
     def goodbye(self, request):
         name = request['name']
         print('goodbye to %s from sender' % name, request['to'])
-        return {'status': True, 'return_args': {'name': name}}
+        return (True, {'name': name})
 
     def stop(self, request):
         result = self.node.stop()
-        return {'status': result, 'return_args': None}
+        return (result, {})
 
 def start_node(node_count, node_id, connection):
     print('start node for id %d' % node_id)
@@ -120,9 +118,19 @@ class NodeCommunicationController():
         self.node_id = node_id
         self.pipes = pipes
 
+    # The request is a dictionary. It should have at
+    # least the 'operation' and 'from' entries defined. The code in DoRequest
+    # will add the other required header fields ('type' and 'to')
+    # It must also contain entries for any additional arguments are needed
+    # by the method call. The exclude list should include the id's of 
+    # any nodes that the request should not be sent to (e.g. the sender
+    # of a request vote request).
     def broadcast_request(self, request, exclude=[]):
         statuses = [None] * self.node_count
         return_args = [None] * self.node_count
+        full_responses = [None] * self.node_count
+
+        request['type'] = 'request'
 
         threads = []
         for target_id in range(node_count):
@@ -136,15 +144,39 @@ class NodeCommunicationController():
             threads.append(thread)
             thread.start()
 
-        for thread in threads:
+        # The response is not actually used. Maybe we sholud stare it 
+        # by id and return it in the get statut tuple? Would the caller have
+        # any use for it? I guess we can add it if we end up needing it.
+
+        response = {
+            'type': 'response',
+            'operation': request['operation'],
+            'to': request['from']            
+            }
+
+        for id in range(len(threads)):
+            full_response = {
+                'type': 'response',
+                'operation': request['operation'],
+                'to': request['from'],
+                'from': id
+            }
+            thread = threads[id]
             thread.join()
             result = thread.get_results()
-            from_id = result['from']
+            print('thread result:', result)
 
-            statuses[from_id] = result['status']
-            return_args[from_id] = result['return_angs']
+            status = result[0]
+            return_args = result[1]
+            statuses[id] = status
+            return_args[id] = return_args
+            full_response.update({
+                'status': status,
+                'return_args': return_args
+                })
+            full_responses[id] = full_response
 
-        return (statuses, return_args)
+        return (statuses, return_args, full_responses)
 
 class DoRequest(Thread):
     def __init__(self, target_id, connection, request):
@@ -152,10 +184,10 @@ class DoRequest(Thread):
         self.target_id = target_id
         self.request = request
         self.connection = connection
-        self.result = {}
+        self.request['to'] = target_id
+        self.status = False
 
     def run(self):
-        request['to'] = self.target_id
         print('thread', 'about to send to %d:' % self.target_id, request)
         self.connection.send(request)
 
@@ -163,40 +195,19 @@ class DoRequest(Thread):
         self.results = {'status': None, 'from': self.target_id}
         
         if self.connection.poll(timeout):
-            response = self.connection.recv()
-            print('response from %d in thread' % self.target_id, response)
-            self.results['status'] = response['status']
-            self.results['return_args'] = response['return_args']
+            reply = self.connection.recv()
+            print('response from %d in thread' % self.target_id, reply)
+            self.status = reply['status']
+            self.return_args = reply['return_args']
+
         else:
             print('timed out waiting for response from %d' % self.target_id)
+            self.status = False
             self.results['status'] = False
             self.results['return_args'] = None
 
     def get_results(self):
-        return self.results
-
-# def broadcast_request(pipes, request, except_list):
-#     server_count = len(pipes) - 1
-#     responses = [False] * server_count
-
-#     threads = []
-#     for i in range(server_count):
-#         if i in except_list:
-#             continue
-#         # connection = pipes[i].requester_conn
-#         print('creating thread for %d to handle'%i,request)
-#         thread = DoRequest(i, pipes[i].client_side, request)
-#         threads.append(thread)
-#         thread.start()
-
-#     for thread in threads:
-#         thread.join()
-#         result = thread.get_result()
-#         print('thread: got result from %d:' % i, result)
-#         responses[result['from_id']] = result['status']
-#         print('Current responses', responses)
-
-#     return responses
+        return (self.status, self.return_args)
 
 class RaftPipe():
     def __init__(self):
@@ -240,6 +251,9 @@ if __name__ == '__main__':
     control_id = node_count
     ncc = NodeCommunicationController(node_count, control_id, pipes)
 
+    '''
+    Simple testing code
+    '''
 
     # Issue a request to each server
     request = {
@@ -256,12 +270,6 @@ if __name__ == '__main__':
 
     results = ncc.broadcast_request(request, exclude)
     print('results from hello', results)
-
-    # request['operation'] = 'goodbye'
-    # request['name'] = 'hal'
-
-    # responses = broadcast_request(pipes, request, except_list)
-    # print('responses from goodbye', responses)
 
     request['operation'] = 'stop'
 
