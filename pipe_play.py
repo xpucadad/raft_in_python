@@ -46,14 +46,9 @@ class RaftNode:
                 'to': requester_id
                 }
 
-            # if operation == 'stop':
-            #     print('Server got stop operation')
-            #     self.stopped = True
-            #     # result = {'status': True}
-            #     result['status'] = True
-            # else:
             print('node %d about to call method for' % self.node_id, operation)
             (response['status'], response['return_args']) = self.node_methods.call_method(operation, request)
+            print('return values from method', response['status'], response['return_args'])
 
             self.connection.send(response)
 
@@ -132,27 +127,17 @@ class NodeCommunicationController():
 
         request['type'] = 'request'
 
-        threads = []
+        threads = [None] * self.node_count
         for target_id in range(node_count):
             if target_id in exclude:
                 continue
 
             thread = DoRequest(
                 target_id, 
-                pipes[target_id].client_side, 
+                self.pipes[target_id].client_side, 
                 request)
-            threads.append(thread)
+            threads[target_id] = thread
             thread.start()
-
-        # The response is not actually used. Maybe we sholud stare it 
-        # by id and return it in the get statut tuple? Would the caller have
-        # any use for it? I guess we can add it if we end up needing it.
-
-        response = {
-            'type': 'response',
-            'operation': request['operation'],
-            'to': request['from']            
-            }
 
         for id in range(len(threads)):
             full_response = {
@@ -162,17 +147,18 @@ class NodeCommunicationController():
                 'from': id
             }
             thread = threads[id]
+            if not thread:
+                continue
             thread.join()
             result = thread.get_results()
-            print('thread result:', result)
 
             status = result[0]
-            return_args = result[1]
+            ra = result[1]
             statuses[id] = status
-            return_args[id] = return_args
+            return_args[id] = ra
             full_response.update({
                 'status': status,
-                'return_args': return_args
+                'return_args': ra,
                 })
             full_responses[id] = full_response
 
@@ -192,7 +178,7 @@ class DoRequest(Thread):
         self.connection.send(request)
 
         timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
-        self.results = {'status': None, 'from': self.target_id}
+        # self.results = {'status': None, 'from': self.target_id}
         
         if self.connection.poll(timeout):
             reply = self.connection.recv()
@@ -203,8 +189,9 @@ class DoRequest(Thread):
         else:
             print('timed out waiting for response from %d' % self.target_id)
             self.status = False
-            self.results['status'] = False
-            self.results['return_args'] = None
+            self.return_args = {}
+            # self.results['status'] = False
+            # self.results['return_args'] = None
 
     def get_results(self):
         return (self.status, self.return_args)
