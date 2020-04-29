@@ -126,15 +126,20 @@ class NodeCommunicationController():
         full_responses = [None] * self.node_count
 
         request['type'] = 'request'
+        request['from'] = self.node_id
 
         threads = [None] * self.node_count
         for target_id in range(node_count):
             if target_id in exclude:
+                print('broadcast excluding node %d'% target_id)
                 continue
-
+            request['to'] = target_id
+            connection = self.pipes[target_id].client_side
+            print('broadcast_request target_id %d, request:' % target_id, request)
+            print('connection:', connection)
             thread = DoRequest(
                 target_id, 
-                self.pipes[target_id].client_side, 
+                connection, 
                 request)
             threads[target_id] = thread
             thread.start()
@@ -259,6 +264,7 @@ if __name__ == '__main__':
     print('results from hello', results)
 
     request['operation'] = 'stop'
+    del request['name']
 
     results = ncc.broadcast_request(request, [])
     print('results from stop', results)
