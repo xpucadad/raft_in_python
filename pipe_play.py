@@ -29,7 +29,8 @@ class RaftNode:
                 continue
             else:
                 request = self.connection.recv()
-                print('server %d got request:' % self.node_id, request)
+                print('server %d got request on %d:' % (self.node_id, hash(self.connection)),
+                 request)
 
             if self.node_id != request['to']:
                 raise IndexError
@@ -108,9 +109,9 @@ def start_node(node_count, node_id, connection):
         print('node got keyboard interrput; exitting')
 
 class NodeCommunicationController():
-    def __init__(self, node_count, node_id, pipes):
+    def __init__(self, node_count, from_id, pipes):
         self.node_count = node_count
-        self.node_id = node_id
+        self.from_id = from_id
         self.pipes = pipes
 
     # The request is a dictionary. It should have at
@@ -126,34 +127,39 @@ class NodeCommunicationController():
         full_responses = [None] * self.node_count
 
         request['type'] = 'request'
-        request['from'] = self.node_id
+        if 'to' in request:
+            del request['to']
+
+        if request['from'] != self.from_id:
+            print('br: from in request != from from construtor; fixing')
+            request['from'] = self.from_id
 
         threads = [None] * self.node_count
         for target_id in range(node_count):
             if target_id in exclude:
                 print('broadcast excluding node %d'% target_id)
                 continue
+            request['random'] = random.uniform(0,100)
             request['to'] = target_id
             connection = self.pipes[target_id].client_side
-            print('broadcast_request target_id %d, request:' % target_id, request)
-            print('connection:', connection)
+            print('br target_id %d, request:' % target_id, request)
+            print('br connection:', hash(connection))
             thread = DoRequest(
-                target_id, 
                 connection, 
                 request)
             threads[target_id] = thread
             thread.start()
 
         for id in range(len(threads)):
-            full_response = {
-                'type': 'response',
-                'operation': request['operation'],
-                'to': request['from'],
-                'from': id
-            }
             thread = threads[id]
             if not thread:
                 continue
+            full_response = {
+                'type': 'response',
+                'operation': request['operation'],
+                'to': self.from_id,
+                'from': id
+            }
             thread.join()
             result = thread.get_results()
 
@@ -170,29 +176,30 @@ class NodeCommunicationController():
         return (statuses, return_args, full_responses)
 
 class DoRequest(Thread):
-    def __init__(self, target_id, connection, request):
+    def __init__(self, connection, request):
         Thread.__init__(self)
-        self.target_id = target_id
         self.request = request
+        self.to = request['to']
         self.connection = connection
-        self.request['to'] = target_id
         self.status = False
+        print('THREAD %d inited with request' % hash(self), request, request['random'])
 
     def run(self):
-        print('thread', 'about to send to %d:' % self.target_id, request)
-        self.connection.send(request)
+        print('thread', 'about to send to %d at %d:' % (self.to, hash(self.connection)), 
+            self.request)
+        self.connection.send(self.request)
 
         timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
         # self.results = {'status': None, 'from': self.target_id}
         
         if self.connection.poll(timeout):
             reply = self.connection.recv()
-            print('response from %d in thread' % self.target_id, reply)
+            print('response from %d in thread' % self.to, reply)
             self.status = reply['status']
             self.return_args = reply['return_args']
 
         else:
-            print('timed out waiting for response from %d' % self.target_id)
+            print('timed out waiting for response from %d' % self.to)
             self.status = False
             self.return_args = {}
             # self.results['status'] = False
@@ -248,7 +255,7 @@ if __name__ == '__main__':
     '''
 
     # Issue a request to each server
-    request = {
+    r1 = {
         'type': 'request',
         'from': control_id,
         'operation': 'hello',
@@ -257,16 +264,19 @@ if __name__ == '__main__':
  
     exclude = []
     # if we have more than 1 server, skip the first.
-    if node_count > 1:
-        exclude.append(0)
+    # if node_count > 1:
+    #     exclude.append(0)
 
-    results = ncc.broadcast_request(request, exclude)
-    print('results from hello', results)
+    # results = ncc.broadcast_request(r1, exclude)
+    # print('results from hello', results)
 
-    request['operation'] = 'stop'
-    del request['name']
-
-    results = ncc.broadcast_request(request, [])
+    r2 = {
+        'type': 'request',
+        'from': control_id,
+        'operation': 'stop',
+    }
+    
+    results = ncc.broadcast_request(r2, [])
     print('results from stop', results)
  
     for i in range(node_count):
