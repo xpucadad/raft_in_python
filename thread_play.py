@@ -42,7 +42,7 @@ class DoRequest(Thread):
 		self.result = {}
 
 	def run(self):
-		print('DoRequest', self.connection, self.request)
+		print('DoRequest - conn %d:' % hash(self.connection), self.request, id(self.request))
 
 		self.connection.send(self.request)
 		response = self.connection.recv()
@@ -84,7 +84,7 @@ if __name__ == '__main__':
 	server.start()
 
 	request = {'operation': 'nothing'}
-	thread = DoRequest(pipe.client_side, request)
+	thread = DoRequest(pipe.client_side, dict(request))
 	thread.start()
 	thread.join()
 	result = thread.get_result()
@@ -92,7 +92,7 @@ if __name__ == '__main__':
 	print('result:', result)
 
 	request = {'operation': 'stop'}
-	thread = DoRequest(pipe.client_side, request)
+	thread = DoRequest(pipe.client_side, dict(request))
 	thread.start()
 	thread.join()
 	result = thread.get_result()

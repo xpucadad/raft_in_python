@@ -53,7 +53,7 @@ class RaftNode:
 
             self.connection.send(response)
 
-        print('server %d stopped' % self.node_id)
+        print('node %d stopped' % self.node_id)
 
     def stop(self):
         self.stopped = True
@@ -128,26 +128,19 @@ class NodeCommunicationController():
         self.request = request
 
         self.request['type'] = 'request'
-        if 'to' in self.request:
-            del self.request['to']
-
-        if self.request['from'] != self.from_id:
-            print('br: from in request != from from construtor; fixing')
-            self.request['from'] = self.from_id
 
         threads = [None] * self.node_count
         for target_id in range(node_count):
             if target_id in exclude:
                 print('broadcast excluding node %d'% target_id)
                 continue
-            self.request['random'] = random.uniform(0,100)
             self.request['to'] = target_id
             connection = self.pipes[target_id].client_side
-            print('br target_id %d, request:' % target_id, self.request)
+            print('br target_id %d, request:' % target_id, self.request, id(self.request))
             print('br connection:', hash(connection))
             # dict's are usually passed 'by reference'. This means that we need to copy
             # it so future interations of this cade wan't override the values of
-            # request that have already been provide to previously created threads.
+            # request that have already been provided to previously created threads.
             thread = DoRequest(
                 connection, 
                 dict(self.request))
@@ -155,28 +148,28 @@ class NodeCommunicationController():
             thread.start()
             # thread.join()
 
-        for id in range(len(threads)):
-            thread = threads[id]
+        for thread_id in range(len(threads)):
+            thread = threads[thread_id]
             if not thread:
                 continue
             full_response = {
                 'type': 'response',
                 'operation': self.request['operation'],
                 'to': self.from_id,
-                'from': id
+                'from': thread_id
             }
             thread.join()
             result = thread.get_results()
 
             status = result[0]
             ra = result[1]
-            statuses[id] = status
-            return_args[id] = ra
+            statuses[thread_id] = status
+            return_args[thread_id] = ra
             full_response.update({
                 'status': status,
                 'return_args': ra,
                 })
-            full_responses[id] = full_response
+            full_responses[thread_id] = full_response
 
         return (statuses, return_args, full_responses)
 
@@ -233,15 +226,15 @@ if __name__ == '__main__':
     # A slot for each server, plus one for control
     pipes = [None] * (node_count+1)
 
-    for id in range(node_count+1):
-        pipes[id] = RaftPipe()
+    for pipe_id in range(node_count+1):
+        pipes[pipe_id] = RaftPipe()
 
     # A server process for each server to handlie incomming messages
     processes = [None] * node_count
-    for id in range(node_count):
-        connection = pipes[id].server_side
-        processes[id] = mp.Process(target=start_node, 
-                            args=(node_count, id, connection))
+    for node_id in range(node_count):
+        connection = pipes[node_id].server_side
+        processes[node_id] = mp.Process(target=start_node, 
+                            args=(node_count, node_id, connection))
 
     for p in processes:
         p.start()
