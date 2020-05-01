@@ -8,8 +8,8 @@ RoleNames = ['Follower', 'Candidate', 'Leader']
 
 class PersistedState():
 
-    def __init__(self, server_id):
-        self.server_id = server_id
+    def __init__(self, node_id):
+        self.node_id = node_id
         try:
             self.mongo_client = MongoClient('localhost:27017')
         except ServerSelectionTimeoutError as e:
@@ -20,7 +20,7 @@ class PersistedState():
             print('Failed to mongo client')
 
         self.db = self.mongo_client.raft
-        self.key = {'server_id': server_id}
+        self.key = {'node_id': node_id}
 
     def get_voted_for(self):
         state = self.get_state()
@@ -31,14 +31,14 @@ class PersistedState():
         return state['current_term']
 
     def get_state(self):
-        state = self.db.ServerState.find_one(self.key)
+        state = self.db.NodeState.find_one(self.key)
         if state == None:
             state = {
-                'server_id': self.server_id,
+                'node_id': self.node_id,
                 'current_term': 0,
                 'voted_for': None
             }
-            self.db.ServerState.insert_one(state)
+            self.db.NodeState.insert_one(state)
         return state
 
     def set_voted_for(self, id):
@@ -50,7 +50,7 @@ class PersistedState():
         return self.set_state(update)
 
     def set_state(self, p_state):
-        result = self.db.ServerState.update_one(
+        result = self.db.NodeState.update_one(
             self.key,
             {'$set' : p_state},
             True
@@ -58,5 +58,5 @@ class PersistedState():
         return p_state
 
     def _reset(self):
-        result = self.db.ServerState.delete_many(self.key)
+        result = self.db.NodeState.delete_many(self.key)
         return self.get_state()

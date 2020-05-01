@@ -10,13 +10,13 @@ from xmlrpc.server import SimpleXMLRPCServer
 from threading import Thread
 
 #from xmlrpc.server import SimpleXMLRPCServerHandler
-from server_state import *
-from server_state import PersistedState
+from node_state import *
+from node_state import PersistedState
 
 MIN_TIMEOUT = 1
 MAX_TIMEOUT = 2
 
-# server_id = 0
+# node_id = 0
 # persisted_state = 0
 # log = 0
 
@@ -25,16 +25,16 @@ MAX_TIMEOUT = 2
     Nodes via their pipes.
 '''
 class RaftNode():
-    def __init__(self, server_count, server_id, pipes):
-        print('RaftNode init', server_count, server_id)
-        self.server_count = server_count
-        self.server_id = server_id
+    def __init__(self, node_count, node_id, pipes):
+        print('RaftNode init', node_count, node_id)
+        self.node_count = node_count
+        self.node_id = node_id
         self.pipes = pipes
-        self.connection = pipes[server_id].server_side
+        self.connection = pipes[node_id].server_side
 
         # PersistedState provides access to any persistent state.
         # Persisted state is stored in Mongo database.
-        self.persisted_state = PersistedState(server_id)
+        self.persisted_state = PersistedState(node_id)
         # current_state = self.persisted_state.get_state()
         # self.current_term = current_state['current_term']
         # self.voted_for = current_state['voted_for']
@@ -52,11 +52,11 @@ class RaftNode():
 
         # The ServerMethods class contains the remote procedures that
         # might get called by other Raft nodes.
-        self.server_methods = ServerMethods(self, self.persisted_state)
+        self.node_methods = RaftNodeMethods(self, self.persisted_state)
 
  
     def run(self):
-        print('server %d started running' % self.server_id)
+        print('node %d started running' % self.node_id)
 
         # Main loop for consuming incoming requests
         while not self.stopped:
@@ -67,16 +67,16 @@ class RaftNode():
             if not have_request:
                 # If there is no message, assume the leader is dead
                 # and run for leader
-                print('server %d timed out waiting for a request' % self.server_id )
+                print('node %d timed out waiting for a request' % self.node_id )
                 if self.role == FOLLOWER:
                     self._run_for_leader()
                 elif self.role = CANDIDATE:
                     self.role = FOLLOWER
                 continue
-
-            # Process a request
-            request = self.connection.recv()
-            print('server %d got request:' % self.server_id, request)
+            else:
+                # Process a request
+                request = self.connection.recv()
+                print('node %d got request:' % self.node_id, request)
 
             # We have a request
             # Parse out the operation
@@ -87,27 +87,26 @@ class RaftNode():
             response = {
                 'type': 'response',
                 'operation': operation,
-                'from': self.server_id,
+                'from': self.node_id,
                 'to': source_id
                 }
 
             # Verify that the message is for us
-            if self.server_id != request['to']:
-                error = 'server {} received message for {}; ignoring. request {}'.format(
-                    self.server_id, request['to'], request)
+            if self.node_id != request['to']:
+                error = 'node {} received message for {}; ignoring. request {}'.format(
+                    self.node_id, request['to'], request)
                 print(error)
                 response['status'] = False
                 response['error'] = error
             else:
-                method_return = self.server_methods.run_method(operation, request)
-                response['status'] = method_return['status']
-                response['method_return'] = method_return
+                (response['status'], response['return_args']) =
+                    self.node_methods.run_method(operation, request)
 
-            print('server %d about to return response ' 
-                        % self.server_id, response)
+            print('node %d about to return response ' 
+                        % self.node_id, response)
             self.connection.send(response)
 
-        print('server %d stopped running' % self.server_id)
+        print('node %d stopped running' % self.node_id)
 
     # Would it make more sense for this to be in ServerMethods? It's
     # not really callable from anywhere but this class, so for now
@@ -116,35 +115,35 @@ class RaftNode():
         self.role = CANDIDATE
         new_term = self.persisted_state.get_current_term() + 1
         self.persisted_state.set_current_term = new_term
-        self.persisted_state.set_voted_for = self.server_id
+        self.persisted_state.set_voted_for = self.node_id
  
         request = {
-            'from': self.server_id,
+            'from': self.node_id,
             'operation': 'request_vote'
             'term': new_term,
-            'candiidate_id': self.server_id,
+            'candiidate_id': self.node_id,
             'last_log_index': self.last_log_index,
             'last_log_term': self.last_log_term
         }
 
-        statuses = [None] * self.server_count
-        except_list = [self.server_id]
+        statuses = [None] * self.node_count
+        except_list = [self.node_id]
         statuses = broadcast_request(self.pipes, request, except_list)
-        statuses[self.server_id] = True
+        statuses[self.node_id] = True
 
  
     def stop(self):
         self.stopped = True
         return True
 
-class ServerMethods():
-    def __init__(self, my_server, persistent_state):
-        self.my_server = my_server
+class RaftNodeMethods():
+    def __init__(self, my_node, persistent_state):
+        self.my_node = my_node
         self.persistent_state = persistent_state
         self.registered_methods = {}
-        self.registered_methods.update({'stop': self.stop})
+        self.registered_methods['stop'] = self.stop
  
-    def run_method(self, operation, args):
+    def call_method(self, operation, request):
         # methods are passed an argument dict containing whatever
         # data they require (passed from the source Raft node in the
         # incoming request)
@@ -154,19 +153,17 @@ class ServerMethods():
         # entries, 'status' for the True/False value, and 'output' for 
         # the data in the returned output dict.
         method = self.registered_methods[operation]
-        result = {}
-        if not method:
-            result['status'] = False
-            result['output'] = {'error': 'No method for operation %s' % operation}
-
+        if method:
+            result = method(request)
         else:
-            (result['status'], result['output']) = method(args)
+            error = 'No such method' + operation
+            result = (False, {'error': error} )
 
         return result
 
 
     def stop(self, args):
-        status = self.my_server.stop()
+        status = self.my_node.stop()
         return (True, {})
 
     def request_vote(self, args):
@@ -188,14 +185,14 @@ class ServerMethods():
     machine that the raft servers are here to process.
 '''
 class RaftClient(SimpleXMLRPCServer):
-    def __init__(self, server_count, client_id, pipes):
+    def __init__(self, node_count, client_id, pipes):
         print('RaftClient %d' % client_id)
 
         # Call our parent to init the socket
         self.port = 8099
         super().__init__(('localhost', self.port))
 
-        self.server_count = server_count
+        self.node_count = node_count
         self.client_id = client_id
         self.pipes = pipes
 
@@ -206,7 +203,7 @@ class RaftClient(SimpleXMLRPCServer):
         # We pass our self to ClientMethod calls to allow
         # the shutdown RPC to call our shutdown method.
         self.register_instance(
-            ClientMethods(self, self.server_count, self.client_id, self.pipes))
+            ClientMethods(self, self.node_count, self.client_id, self.pipes))
     
 
     def run(self):
@@ -215,17 +212,71 @@ class RaftClient(SimpleXMLRPCServer):
             self.handle_request()
 
     def shutdown(self):
-        print('client shutting down')
+        print('Raft client shutting down')
         self.shuttingdown = True
         return True
 
+class NodeCommunicationController():
+    def __init__(self, node_count, from_id, pipes)
+        self.node_count = node_count
+        self.from_id = from_id
+        self.pipes = pipes
+
+    def broadcast_request(self, request, exclude=[]):
+        self.request = request
+        self.operation = self.request['operation']
+        statuses = [None] * self.node_count
+        return_args = [None] * self.node_count
+        full_responses = [None] * self.node_count
+
+        self.request['type'] = 'request'
+
+        threads = [None] * self.node_count
+        for nid in range(self.node_count):
+            if nid in exclude:
+                print('broadcast excluding node %d' % nid)
+                continue
+
+            self.request['to'] = nid
+            connection = self.pipes[nid].client_side
+
+            thread = DoRequest(connection, dict(self.request))
+            threads[nid] = thread
+            thread.start()
+
+        for tid in range(len(threads)):
+            thread = threads[tid]
+            if not thread:
+                continue
+
+            full_response = {
+                'type': 'response',
+                'operation': self.operation,
+                'to': self.from_id,
+                'from': tid
+            }
+            thread.join()
+            result = thread.get_results()
+            status = result[0]
+            ra = result[1]
+            statuses[tid] = status
+            return_args[tid] = ra
+            full_response.update({
+                'status': status,
+                'return_args': ra
+                })
+            full_responses[tid] = full_response
+
+        return (statuses, return_args, full_responses)
+
+
 class ClientMethods():
-    def __init__(self, client, server_count, client_id, pipes):
+    def __init__(self, client, node_count, client_id, pipes):
         
         print('Client Methods %d' % client_id)
         self.client = client    # This is the instance of RaftClient that
                                 # created this instance of ClientMethods
-        self.server_count = server_count
+        self.node_count = node_count
         self.client_id = client_id
         self.pipes = pipes
         self.leader = 0     # assume leader is 0
@@ -234,9 +285,9 @@ class ClientMethods():
     def shutdown(self):
         print('client requested a stop')
         request = {'type': 'request', 'operation': 'stop', 'from': self.client_id}
-        # Our server_id is the same as SERVER_COUNT so the follwing
+        # Our node_id is the same as node_COUNT so the follwing
         # iteration will get every server but not this server.
-        # self.server_id == SERVER_COUNT == len(queues
+        # self.node_id == SERVER_COUNT == len(queues
         # probably should pass in SERVER_COUNT explicitly in __init__.
         statuses = broadcast_request(self.pipes, request, [])
 
@@ -283,11 +334,11 @@ class DoRequest(Thread):
         return self.result
 
 def broadcast_request(pipes, request, except_list):
-    server_count = len(pipes) - 1
-    statuses = [False] * server_count
+    node_count = len(pipes) - 1
+    statuses = [False] * node_count
 
     threads = []
-    for i in range(server_count):
+    for i in range(node_count):
         if i in except_list:
             continue
         thread = DoRequest(i, pipes[i].client_side, request)
@@ -302,12 +353,12 @@ def broadcast_request(pipes, request, except_list):
     return statuses
 
 ''' This is the top level entry point for all subprocesses '''
-def start_server(server_count, server_id, connection):
-    print ('start_server', server_count, server_id)
+def start_server(node_count, node_id, connection):
+    print ('start_server', node_count, node_id)
 
     # Create and run the class which will consume entries on the queue
-    # request_queues[server_id].
-    node = RaftNode(server_count, server_id, connection)
+    # request_queues[node_id].
+    node = RaftNode(node_count, node_id, connection)
     try:
         node.run()
     except KeyboardInterrupt:
@@ -374,14 +425,14 @@ if __name__ == '__main__':
         print('Must supply server count')
         exit()
 
-    server_count = int(sys.argv[1])
-    if server_count < 1:
+    node_count = int(sys.argv[1])
+    if node_count < 1:
         print('Must have at least 1 server')
         exit()
 
     # Create the pipes
-    pipes = [None] * (server_count + 1)
-    for i in range(server_count + 1):
+    pipes = [None] * (node_count + 1)
+    for i in range(node_count + 1):
         pipes[i] = RaftPipe()
 
     # Create the sub processes, Note that the subprocesses won't execute the 
@@ -391,14 +442,14 @@ if __name__ == '__main__':
     # have access to them.
     #
     # start_server is the function where all subprocesses start execution
-    processes = [None] * server_count
+    processes = [None] * node_count
 
     # Create all the subprocesses
-    for id in range(server_count):
-        connection = pipes[id].server_side
+    for id in range(node_count):
+        connection = pipes[id].node_side
         processes[id] = mp.Process(
             target=start_server, 
-            args=(server_count, id, connection)
+            args=(node_count, id, connection)
             )
 
     # Start all the subprocesses
@@ -414,9 +465,9 @@ if __name__ == '__main__':
     #
     # Note that this code is never run in any of the subprocesses, but only
     # here in the original process.
-    client_id = server_count    # This is equivalent to the server_id and
+    client_id = node_count    # This is equivalent to the node_id and
                                 # identives the queues used by this process
-    client = RaftClient(server_count, client_id, pipes)
+    client = RaftClient(node_count, client_id, pipes)
 
     # To shotdown the servers, the client process should issue a shutdown 
     # RPC. This will cause the shotdown method of ClientMethods to get 
