@@ -145,9 +145,12 @@ class NodeCommunicationController():
             connection = self.pipes[target_id].client_side
             print('br target_id %d, request:' % target_id, self.request)
             print('br connection:', hash(connection))
+            # dict's are usually passed 'by reference'. This means that we need to copy
+            # it so future interations of this cade wan't override the values of
+            # request that have already been provide to previously created threads.
             thread = DoRequest(
                 connection, 
-                self.request)
+                dict(self.request))
             threads[target_id] = thread
             thread.start()
             # thread.join()
@@ -181,14 +184,11 @@ class DoRequest(Thread):
     def __init__(self, connection, request):
         Thread.__init__(self)
         self.request = request
-        self.to = request['to']
+        self.to = self.request['to']
         self.connection = connection
         self.status = False
-        print('THREAD %d inited with request' % hash(self), request, request['random'])
 
     def run(self):
-        print('thread', 'about to send to %d at %d:' % (self.to, hash(self.connection)), 
-            self.request)
         self.connection.send(self.request)
 
         timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
