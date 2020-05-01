@@ -125,30 +125,32 @@ class NodeCommunicationController():
         statuses = [None] * self.node_count
         return_args = [None] * self.node_count
         full_responses = [None] * self.node_count
+        self.request = request
 
-        request['type'] = 'request'
-        if 'to' in request:
-            del request['to']
+        self.request['type'] = 'request'
+        if 'to' in self.request:
+            del self.request['to']
 
-        if request['from'] != self.from_id:
+        if self.request['from'] != self.from_id:
             print('br: from in request != from from construtor; fixing')
-            request['from'] = self.from_id
+            self.request['from'] = self.from_id
 
         threads = [None] * self.node_count
         for target_id in range(node_count):
             if target_id in exclude:
                 print('broadcast excluding node %d'% target_id)
                 continue
-            request['random'] = random.uniform(0,100)
-            request['to'] = target_id
+            self.request['random'] = random.uniform(0,100)
+            self.request['to'] = target_id
             connection = self.pipes[target_id].client_side
-            print('br target_id %d, request:' % target_id, request)
+            print('br target_id %d, request:' % target_id, self.request)
             print('br connection:', hash(connection))
             thread = DoRequest(
                 connection, 
-                request)
+                self.request)
             threads[target_id] = thread
             thread.start()
+            # thread.join()
 
         for id in range(len(threads)):
             thread = threads[id]
@@ -156,7 +158,7 @@ class NodeCommunicationController():
                 continue
             full_response = {
                 'type': 'response',
-                'operation': request['operation'],
+                'operation': self.request['operation'],
                 'to': self.from_id,
                 'from': id
             }
