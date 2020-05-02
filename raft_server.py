@@ -281,6 +281,8 @@ class ClientMethods():
         self.pipes = pipes
         self.leader = 0     # assume leader is 0
 
+        self.ncc = NodeCommunicationController(self.node_count, self.cilent_node, self.pipes)
+
     
     def shutdown(self):
         print('client requested a stop')
@@ -289,7 +291,7 @@ class ClientMethods():
         # iteration will get every server but not this server.
         # self.node_id == SERVER_COUNT == len(queues
         # probably should pass in SERVER_COUNT explicitly in __init__.
-        statuses = broadcast_request(self.pipes, request, [])
+        statuses = self.ncc.broadcast_request(request, [])
 
         print('ClientMethods results from shutdown request: ', statuses)
         print('stop server proxy')
@@ -306,55 +308,51 @@ returned value
 '''
 
 class DoRequest(Thread):
-    def __init__(self, target_id, connection, request):
+    def __init__(self, connection, request):
         Thread.__init__(self)
-        self.target_id = target_id
         self.connection = connection
         self.request = request
+        self.to = self.request['to']
         self.result = None
 
     def run(self):
-        self.request['to'] = self.target_id
         self.connection.send(self.request)
 
         timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
-        self.result = {
-            'status': None,
-            'from': self.target_id
-            }
 
         if self.connection.poll(timeout):
-            response = self.connection.recv()
-            self.result['status'] = response['status']
-            self.result['response'] = response
+            reply = self.connection.recv()
+            self.rstatus = reply['status']
+            self.return_args = reply['return_args']
         else:
-            self.result['status'] = False
+            self.status = False
+            self.return_args = {}
 
-    def get_result(self):
-        return self.result
+    def get_results(self):
+        return (self.status, self.return_args)
 
-def broadcast_request(pipes, request, except_list):
-    node_count = len(pipes) - 1
-    statuses = [False] * node_count
+# def broadcast_request(pipes, request, except_list):
+#     node_count = len(pipes) - 1
+#     statuses = [False] * node_count
 
-    threads = []
-    for i in range(node_count):
-        if i in except_list:
-            continue
-        thread = DoRequest(i, pipes[i].client_side, request)
-        threads.append(thread)
-        thread.start()
+#     threads = []
+#     for i in range(node_count):
+#         if i in except_list:
+#             continue
+#         thread = DoRequest(i, pipes[i].client_side, request)
+#         threads.append(thread)
+#         thread.start()
 
-    for thread in threads:
-        thread.join()
-        result = thread.get_result()
-        statuses[result['from']] = result['status']
+#     for thread in threads:
+#         thread.join()
+#         result = thread.get_result()
+#         statuses[result['from']] = result['status']
 
-    return statuses
+#     return statuses
 
 ''' This is the top level entry point for all subprocesses '''
-def start_server(node_count, node_id, connection):
-    print ('start_server', node_count, node_id)
+def start_node(node_count, node_id, connection):
+    print ('start_node', node_count, node_id)
 
     # Create and run the class which will consume entries on the queue
     # request_queues[node_id].
@@ -362,7 +360,7 @@ def start_server(node_count, node_id, connection):
     try:
         node.run()
     except KeyboardInterrupt:
-        print('server got keyboard interrupt; exitting')
+        print('node got keyboard interrupt; exitting')
 
 
 
@@ -445,11 +443,11 @@ if __name__ == '__main__':
     processes = [None] * node_count
 
     # Create all the subprocesses
-    for id in range(node_count):
-        connection = pipes[id].node_side
-        processes[id] = mp.Process(
-            target=start_server, 
-            args=(node_count, id, connection)
+    for nid in range(node_count):
+        connection = pipes[nid].node_side
+        processes[nid] = mp.Process(
+            target=start_node, 
+            args=(node_count, nid, connection)
             )
 
     # Start all the subprocesses
