@@ -25,12 +25,11 @@ MAX_TIMEOUT = 2
     Nodes via their pipes.
 '''
 class RaftNode():
-    def __init__(self, node_count, node_id, pipes):
+    def __init__(self, node_count, node_id, connection):
         print('RaftNode init', node_count, node_id)
         self.node_count = node_count
         self.node_id = node_id
-        self.pipes = pipes
-        self.connection = pipes[node_id].server_side
+        self.connection = connection
 
         # PersistedState provides access to any persistent state.
         # Persisted state is stored in Mongo database.
@@ -53,7 +52,7 @@ class RaftNode():
         # The ServerMethods class contains the remote procedures that
         # might get called by other Raft nodes.
         self.node_methods = RaftNodeMethods(self, self.persisted_state)
-
+        self.ncc = NodeCommunicationController(self.node_count, self.node_id, self.connection)
  
     def run(self):
         print('node %d started running' % self.node_id)
@@ -70,7 +69,7 @@ class RaftNode():
                 print('node %d timed out waiting for a request' % self.node_id )
                 if self.role == FOLLOWER:
                     self._run_for_leader()
-                elif self.role = CANDIDATE:
+                elif self.role == CANDIDATE:
                     self.role = FOLLOWER
                 continue
             else:
@@ -99,7 +98,7 @@ class RaftNode():
                 response['status'] = False
                 response['error'] = error
             else:
-                (response['status'], response['return_args']) =
+                (response['status'], response['return_args']) = \
                     self.node_methods.run_method(operation, request)
 
             print('node %d about to return response ' 
@@ -119,7 +118,7 @@ class RaftNode():
  
         request = {
             'from': self.node_id,
-            'operation': 'request_vote'
+            'operation': 'request_vote',
             'term': new_term,
             'candiidate_id': self.node_id,
             'last_log_index': self.last_log_index,
@@ -127,8 +126,9 @@ class RaftNode():
         }
 
         statuses = [None] * self.node_count
-        except_list = [self.node_id]
-        statuses = broadcast_request(self.pipes, request, except_list)
+        exclude_list = [self.node_id]
+        result = self.ncc.broadcast_request(request, exclude_list)
+        (statuses, return_args, full_responses) = result
         statuses[self.node_id] = True
 
  
@@ -217,10 +217,10 @@ class RaftClient(SimpleXMLRPCServer):
         return True
 
 class NodeCommunicationController():
-    def __init__(self, node_count, from_id, pipes)
+    def __init__(self, node_count, from_id, connection):
         self.node_count = node_count
         self.from_id = from_id
-        self.pipes = pipes
+        self.connection = connection
 
     def broadcast_request(self, request, exclude=[]):
         self.request = request
@@ -238,9 +238,9 @@ class NodeCommunicationController():
                 continue
 
             self.request['to'] = nid
-            connection = self.pipes[nid].client_side
 
-            thread = DoRequest(connection, dict(self.request))
+            # Pass a copy of the request to the thread
+            thread = DoRequest(self.connection, dict(self.request))
             threads[nid] = thread
             thread.start()
 
@@ -281,7 +281,7 @@ class ClientMethods():
         self.pipes = pipes
         self.leader = 0     # assume leader is 0
 
-        self.ncc = NodeCommunicationController(self.node_count, self.cilent_node, self.pipes)
+        self.ncc = NodeCommunicationController(self.node_count, self.client_id, self.pipes)
 
     
     def shutdown(self):
@@ -313,7 +313,7 @@ class DoRequest(Thread):
         self.connection = connection
         self.request = request
         self.to = self.request['to']
-        self.result = None
+        self.status = False
 
     def run(self):
         self.connection.send(self.request)
@@ -321,34 +321,15 @@ class DoRequest(Thread):
         timeout = random.uniform(MIN_TIMEOUT, MAX_TIMEOUT)
 
         if self.connection.poll(timeout):
-            reply = self.connection.recv()
-            self.rstatus = reply['status']
-            self.return_args = reply['return_args']
+            response = self.connection.recv()
+            self.status = response['status']
+            self.return_args = response['return_args']
         else:
             self.status = False
             self.return_args = {}
 
     def get_results(self):
         return (self.status, self.return_args)
-
-# def broadcast_request(pipes, request, except_list):
-#     node_count = len(pipes) - 1
-#     statuses = [False] * node_count
-
-#     threads = []
-#     for i in range(node_count):
-#         if i in except_list:
-#             continue
-#         thread = DoRequest(i, pipes[i].client_side, request)
-#         threads.append(thread)
-#         thread.start()
-
-#     for thread in threads:
-#         thread.join()
-#         result = thread.get_result()
-#         statuses[result['from']] = result['status']
-
-#     return statuses
 
 ''' This is the top level entry point for all subprocesses '''
 def start_node(node_count, node_id, connection):
@@ -362,47 +343,8 @@ def start_node(node_count, node_id, connection):
     except KeyboardInterrupt:
         print('node got keyboard interrupt; exitting')
 
-
-
-# def AppendEntries(term, leader_id, prev_log_index, prev_log_term,
-#                     entries, leader_commit):
-#     print("AppendEntries")
-#     print('term: ' + str(term))
-#     print('leader_id: ' + str(leader_id))
-#     print('prev_log_index: ' + str(prev_log_index))
-#     print('prev_log_term: ' + str(prev_log_term))
-#     print('entries: ' + str(entries))
-#     print('leaderCommit: ' + str(leader_commit))
-
-#     p_state = persisted_state.get_state()
-#     current_term = p_state['current_term']
-#     print('current_term: ' + str(current_term))
-#     print('voted_for: ' + str(p_state['voted_for']))
-
-#     if term < current_term:
-#         return (current_term, False)
-
-#     (status, entry_term, _) = log.get_entry(prev_log_index)
-#     if not status:
-#         return(current_term, False)
-
-#     if entry_term != prev_log_term:
-#         return(current_term, False)
-
-#     (status, entry_term, _) = log.get_entry(prev_log_index)
-#     if status and (term != entry_term):
-#         # delete entry and all following
-#         Pass
-#     # append entries
-#     else:
-#     # don't know yet
-#         Pass
-
-#     p_state['current_term'] = term
-#     persisted_state.set_state(p_state)
-
-#     return (term, True)
-
+# Encapsulates the 2 connections at the opposite ends of
+# a pipe.
 class RaftPipe():
     def __init__(self):
         (self.client_side, self.server_side) = mp.Pipe()
@@ -444,7 +386,7 @@ if __name__ == '__main__':
 
     # Create all the subprocesses
     for nid in range(node_count):
-        connection = pipes[nid].node_side
+        connection = pipes[nid].server_side
         processes[nid] = mp.Process(
             target=start_node, 
             args=(node_count, nid, connection)
